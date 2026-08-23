@@ -1,7 +1,7 @@
 name: meshtastic-platform
 label: Meshtastic
 kind: platform
-version: "0.1.8"
+version: "0.1.9"
 description: >-
   Meshtastic LoRa mesh gateway adapter for Hermes Agent. Relays inbound mesh text
   messages to the agent and sends the agent's replies back over the radio. Direct
