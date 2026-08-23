@@ -12,11 +12,15 @@ surface a friendly install hint instead of crashing on a bare directory-drop ins
 from __future__ import annotations
 
 import json
-import os
 import threading
 from typing import Any, Callable
 
-from .connection import MeshtasticUnavailable, get_manager
+from .connection import (
+    ConnectTargetRejected,
+    MeshtasticUnavailable,
+    get_manager,
+    validate_connect_target,
+)
 from .observer import get_observer
 
 # Meshtastic portnum for plain text messages (portnums.proto TEXT_MESSAGE_APP).
@@ -59,10 +63,13 @@ def _kb():
 
 @_guard
 def connect(args: dict) -> str:
-    host = args.get("host") or os.environ.get("MESHTASTIC_HOST")
-    if not host:
-        return _err("No host given and MESHTASTIC_HOST is not set.")
-    port = int(args.get("port", 4403))
+    # Authorize the target BEFORE touching the manager. validate_connect_target()
+    # is pure, so a rejected connect cannot overwrite the manager's _host/_port or
+    # disturb an existing healthy link — nothing downstream has run yet.
+    try:
+        host, port = validate_connect_target(args.get("host"), args.get("port"))
+    except ConnectTargetRejected as exc:
+        return _err(str(exc), code=exc.code)
     status = get_manager().connect(host, port)
     # "status" mirrors the three-state `state` field (it used to be hardcoded
     # "connected", which lied while the node was still coming up).

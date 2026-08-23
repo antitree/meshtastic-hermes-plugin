@@ -452,9 +452,31 @@ first (`hermes gateway stop`) to avoid competing for the radio's TCP slot.
    - "What have you observed about node !a1b2c3d4?" → `meshtastic_kb_neighbors` / `meshtastic_kb_interactions`
    - "Summarize mesh activity." → `meshtastic_kb_summary`
 
-## Connecting explicitly
+## Connecting explicitly (and why the host is locked down)
 
-If `MESHTASTIC_HOST` is unset, ask the agent to connect with a host, which calls:
+`meshtastic_connect` is a tool the **model** can call, and the connection it opens is
+process-wide: whatever host it picks becomes the radio for the gateway adapter, the
+observer, and every send path. If the model could choose that host freely — from a
+message it read off the mesh, say, or from a prompt-injected instruction in any content
+it processed — a single tool call could quietly repoint the whole plugin at a node the
+operator never configured. So the target is **configuration, not conversation**:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `MESHTASTIC_HOST` | _unset_ | The authoritative radio target. When set, `meshtastic_connect` uses it, and a **different** tool-supplied `host` is rejected. |
+| `MESHTASTIC_ALLOW_DYNAMIC_HOSTS` | `false` | Set to `true`/`1`/`yes`/`on` to let a tool-supplied `host` be used when `MESHTASTIC_HOST` is unset. Anything else — including a typo — leaves dynamic hosts **off**, so the failure mode of a mistake is "cannot connect", not "connected somewhere unexpected". |
+| `MESHTASTIC_ALLOWED_HOSTS` | _unset_ | Optional comma-separated allowlist of hostnames, IP addresses, and CIDR ranges (e.g. `192.0.2.0/24,your-host.example.com`) applied on top of `MESHTASTIC_ALLOW_DYNAMIC_HOSTS`. Unset means any host is accepted once dynamic hosts are enabled. Hostnames must match literally — names are never resolved to check them against a CIDR entry, because DNS is not a trustworthy input here. |
+
+The normal setup is therefore: set `MESHTASTIC_HOST`, and let the agent call
+`meshtastic_connect` with **no arguments** (it rarely needs to at all — the plugin
+auto-connects at session start and a supervisor keeps the link up).
+
+For development against an ad-hoc node, opt in explicitly:
+
+```bash
+export MESHTASTIC_ALLOW_DYNAMIC_HOSTS=true
+export MESHTASTIC_ALLOWED_HOSTS=192.0.2.0/24     # optional, recommended
+```
 
 ```json
 {
@@ -462,6 +484,11 @@ If `MESHTASTIC_HOST` is unset, ask the agent to connect with a host, which calls
   "arguments": { "host": "192.0.2.10", "port": 4403 }
 }
 ```
+
+`port` must be an integer in `1`–`65535` and defaults to `4403`. A rejected connect is a
+complete no-op: it returns a JSON error (`{"error": ..., "code": "host_not_allowed"}` and
+friends) without changing the configured target and without disturbing a link that is
+already up.
 
 All other tools require an active connection except the `meshtastic_kb_*` tools, which
 read the persistent knowledge base and work offline.

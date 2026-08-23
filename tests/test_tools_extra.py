@@ -111,6 +111,10 @@ def test_connect_uses_the_env_host(monkeypatch):
 
 
 def test_connect_honors_an_explicit_port(monkeypatch):
+    # An explicit host is only accepted when the operator opted in; see
+    # test_connect_policy.py for the restriction itself.
+    monkeypatch.delenv("MESHTASTIC_HOST", raising=False)
+    monkeypatch.setenv("MESHTASTIC_ALLOW_DYNAMIC_HOSTS", "true")
     calls = []
     mgr = connection.get_manager()
     monkeypatch.setattr(mgr, "connect", lambda h, p: calls.append((h, p)) or {"connected": True})

@@ -146,7 +146,9 @@ Put them wherever the Hermes process will read them: `$HERMES_HOME/.env` (see
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `MESHTASTIC_HOST` | _unset_ | Node host/IP to reach over TCP (port `4403`). Required by the gateway adapter; without it the adapter stays dormant. Also used by the tools plugin to auto-connect on session start. |
+| `MESHTASTIC_HOST` | _unset_ | Node host/IP to reach over TCP (port `4403`). Required by the gateway adapter; without it the adapter stays dormant. Also used by the tools plugin to auto-connect on session start, and **authoritative**: `meshtastic_connect` rejects a different tool-supplied host. |
+| `MESHTASTIC_ALLOW_DYNAMIC_HOSTS` | _unset_ (off) | `1`/`true`/`yes`/`on` lets `meshtastic_connect` use a caller-supplied host when `MESHTASTIC_HOST` is unset. Off by default so a tool call cannot repoint the radio link — see [Connecting explicitly](docs/usage.md#connecting-explicitly-and-why-the-host-is-locked-down). |
+| `MESHTASTIC_ALLOWED_HOSTS` | _unset_ | Optional comma-separated allowlist of hostnames / IPs / CIDR ranges (e.g. `192.0.2.0/24`) applied when dynamic hosts are enabled. |
 | `MESHTASTIC_REPLY_ALL` | _unset_ (off) | `1`/`true`/`yes` = the gateway may reply on **every** channel, including the public Primary. Overrides `MESHTASTIC_REPLY_CHANNELS`. |
 | `MESHTASTIC_REPLY_CHANNELS` | _unset_ (DMs only) | Comma-separated channel **names** the gateway may reply on, e.g. `in.secure`. `all` means every channel. Numeric indices work but are legacy and unsafe — see [Use channel names, not indices](docs/usage.md#use-channel-names-not-indices). |
 | `MESHTASTIC_REQUIRE_MENTION` | _unset_ (**on**) | When on, a **channel** message is answered only if it starts with this node's name or id. `0`/`false`/`no` turns it off. DMs are always answered either way. |
@@ -196,7 +198,7 @@ MESHTASTIC_ALLOWED_USERS=!deadbeef      # gate 3: this node may talk to the agen
 
 | Tool                         | Description                                                                                    |
 | ---------------------------- | ---------------------------------------------------------------------------------------------- |
-| `meshtastic_connect`         | Open TCP link to a node (uses `MESHTASTIC_HOST` if no host given)                              |
+| `meshtastic_connect`         | Open TCP link to the configured node (`MESHTASTIC_HOST`; a different host is rejected)         |
 | `meshtastic_disconnect`      | Close the link, stop observing                                                                 |
 | `meshtastic_send_text`       | Send text: broadcast (channel-PSK), or private DM to a node (`dest_id` + `pki` for end-to-end) |
 | `meshtastic_recent_messages` | Recently decoded TEXT messages (never encrypted content)                                       |
