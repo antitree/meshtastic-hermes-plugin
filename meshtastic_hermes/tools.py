@@ -22,6 +22,7 @@ from .connection import (
     validate_connect_target,
 )
 from .observer import get_observer
+from .policy import ToolSendRejected, validate_tool_send
 
 # Meshtastic portnum for plain text messages (portnums.proto TEXT_MESSAGE_APP).
 _TEXT_MESSAGE_APP = 1
@@ -86,9 +87,21 @@ def send_text(args: dict) -> str:
     text = (args.get("text") or "").strip()
     if not text:
         return _err("No text provided.")
-    channel_index = int(args.get("channel_index", 0))
-    dest_id = args.get("dest_id")
-    pki = bool(args.get("pki", False))
+
+    mgr = get_manager()
+
+    # Authorize the destination BEFORE anything touches the radio. validate_tool_send()
+    # is pure, so a rejected send cannot transmit: nothing downstream has run yet.
+    # channel_index is NOT defaulted to 0 here — a broadcast must name its channel,
+    # because the channel a default would pick is the public Primary.
+    try:
+        target = validate_tool_send(args, mgr.channel_table())
+    except ToolSendRejected as exc:
+        return _err(str(exc), code=exc.code)
+
+    channel_index = target.channel_index
+    dest_id = target.dest_id
+    pki = target.pki
     # Reliable delivery by default: the firmware retries and reports ack/nak. Helps
     # messages survive lossy multi-hop links.
     want_ack = bool(args.get("want_ack", True))
@@ -97,10 +110,8 @@ def send_text(args: dict) -> str:
     wait_ack = bool(args.get("wait_ack", bool(dest_id) and want_ack))
     ack_timeout = float(args.get("ack_timeout", 15.0))
 
-    if pki and not dest_id:
-        return _err("pki=true requires dest_id — public-key encryption is point-to-point.")
-
-    iface = get_manager().iface
+    # (pki without dest_id is rejected by validate_tool_send above.)
+    iface = mgr.iface
 
     # We send everything via sendData(portNum=TEXT_MESSAGE_APP) — identical on-air to
     # sendText — because only sendData exposes onResponseAckPermitted, needed to have

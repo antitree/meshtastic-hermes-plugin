@@ -35,7 +35,15 @@ class _FakeRadio:
         self.closed = False
         self.myInfo = types.SimpleNamespace(my_node_num=MY_NODE)
         self.nodes: dict = {}
-        self.localNode = types.SimpleNamespace(channels=[])
+        # A real channel table: index 0 = unnamed PRIMARY (public), 1 = "in.secure",
+        # 2 = "ops". The tool-send policy resolves channel names against this.
+        self.localNode = types.SimpleNamespace(
+            channels=[
+                types.SimpleNamespace(role=1, settings=types.SimpleNamespace(name="")),
+                types.SimpleNamespace(role=2, settings=types.SimpleNamespace(name="in.secure")),
+                types.SimpleNamespace(role=2, settings=types.SimpleNamespace(name="ops")),
+            ]
+        )
         self.sent: list = []
 
     # -- outbound -----------------------------------------------------
@@ -191,9 +199,13 @@ def test_e2e_observation_survives_a_reconnect(radio, monkeypatch):
 # ----------------------------------------------------------------------
 
 
-def test_e2e_send_reaches_the_radio(radio):
+def test_e2e_send_reaches_the_radio(radio, monkeypatch):
+    # Tool broadcasts need an explicit opt-in (remediation item 1); this test is
+    # about the radio path, so grant it.
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "ops")
     result = json.loads(
-        tools.send_text({"text": "outbound", "channel_index": 2, "want_ack": False})
+        tools.send_text({"text": "outbound", "channel_name": "ops", "want_ack": False})
     )
     assert result["sent"] is True
     assert radio.sent[0]["payload"] == b"outbound"

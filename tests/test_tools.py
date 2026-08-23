@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import types
 
 from meshtastic_hermes import connection, tools
 
@@ -52,6 +53,16 @@ class FakeIface:
         self.sendData_calls = []
         self.myInfo = None
         self._ack_reason = ack_reason
+        # A channel table for the tool-send policy to resolve names against:
+        # index 0 = unnamed PRIMARY (the public one), index 1 = "in.secure".
+        self.localNode = types.SimpleNamespace(
+            channels=[
+                types.SimpleNamespace(role=1, settings=types.SimpleNamespace(name="")),
+                types.SimpleNamespace(
+                    role=2, settings=types.SimpleNamespace(name="in.secure")
+                ),
+            ]
+        )
 
     def sendData(self, data, **kw):
         self.sendData_calls.append((data, kw))
@@ -132,6 +143,10 @@ def test_supervisor_lifecycle(monkeypatch):
 
 
 def test_broadcast_uses_senddata_no_ack_wait(monkeypatch):
+    # Tool broadcasts are refused unless the operator opts in (remediation item 1);
+    # this test is about the SEND mechanics, so grant the permission explicitly.
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
     fake = _inject(monkeypatch, FakeIface())
     res = json.loads(tools.send_text({"text": "hi", "channel_index": 1}))
     assert res["sent"] is True
@@ -162,21 +177,29 @@ def test_dm_pki_waits_and_reports_delivered(monkeypatch):
 
 def test_dm_reports_failure_on_nak(monkeypatch):
     _inject(monkeypatch, FakeIface(ack_reason="MAX_RETRANSMIT"))
-    res = json.loads(tools.send_text({"text": "x", "dest_id": "!a696579c"}))
+    res = json.loads(tools.send_text({"text": "x", "dest_id": "!a696579c", "pki": True}))
     assert res["ack"]["status"] == "failed"
     assert res["ack"]["reason"] == "MAX_RETRANSMIT"
 
 
 def test_dm_reports_no_ack_on_timeout(monkeypatch):
     _inject(monkeypatch, FakeIface(ack_reason=None))  # never acks
-    res = json.loads(tools.send_text({"text": "x", "dest_id": "!a696579c", "ack_timeout": 0.1}))
+    res = json.loads(
+        tools.send_text(
+            {"text": "x", "dest_id": "!a696579c", "pki": True, "ack_timeout": 0.1}
+        )
+    )
     assert res["ack"]["status"] == "no_ack"
     assert res["ack"]["reason"] == "TIMEOUT"
 
 
 def test_want_ack_false_disables_reliability(monkeypatch):
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
     fake = _inject(monkeypatch, FakeIface())
-    res = json.loads(tools.send_text({"text": "yo", "want_ack": False}))
+    res = json.loads(
+        tools.send_text({"text": "yo", "channel_name": "in.secure", "want_ack": False})
+    )
     assert res["want_ack"] is False
     assert res["ack"] is None
     _, kw = fake.sendData_calls[0]

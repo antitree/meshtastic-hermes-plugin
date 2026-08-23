@@ -41,21 +41,28 @@ DISCONNECT = {
 SEND_TEXT = {
     "name": "meshtastic_send_text",
     "description": (
-        "Send a text message over the mesh. Encryption depends on the arguments:\n"
-        "- Broadcast (no dest_id): goes to everyone on the channel, encrypted with that "
-        "channel's pre-shared key. On the default Primary channel that key is public, so "
-        "treat plain channel sends as NON-private.\n"
-        "- Direct to a node (dest_id) WITHOUT pki: still only channel-PSK encrypted — not "
-        "private from other channel members.\n"
-        "- Direct to a node with pki=true: end-to-end public-key encryption (Curve25519) to "
-        "that node only. Use this for private direct messages. Requires the recipient's key "
-        "to be known to the radio (firmware 2.5+)."
+        "Send a text message over the mesh. TRANSMIT POLICY IS ENFORCED — sends the "
+        "operator has not permitted are refused with a JSON error before anything goes "
+        "on the air, so do not assume arbitrary sends are allowed:\n"
+        "- PKI DIRECT MESSAGE (dest_id + pki=true) is the only destination allowed by "
+        "default: end-to-end public-key encryption (Curve25519) to that node only. "
+        "Requires the recipient's key to be known to the radio (firmware 2.5+).\n"
+        "- Direct to a node WITHOUT pki is refused: it is only channel-PSK encrypted, so "
+        "every holder of that channel's key can read it.\n"
+        "- CHANNEL BROADCASTS are refused unless the operator has enabled them "
+        "(MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST) and listed the channel in "
+        "MESHTASTIC_TOOL_SEND_CHANNELS; the Primary channel additionally needs "
+        "MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY, because its key is public on a default "
+        "radio. There is NO default channel: a broadcast must name one.\n"
+        "- This policy is configured separately from the gateway's automatic-reply "
+        "policy; being allowed to reply on a channel does not allow sending there."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "text": {"type": "string", "description": "Message body to send."},
-            "channel_index": {"type": "integer", "description": "Channel index (default 0 / Primary). For pki sends this is only the routing slot, not the encryption key."},
+            "channel_name": {"type": "string", "description": "Channel NAME to broadcast on, e.g. 'in.secure' (case-sensitive; list them with meshtastic_list_channels). Preferred over channel_index: a name is resolved against the radio's channel table, while an index is a slot that can silently repoint. Required for a broadcast unless channel_index is given — there is no default channel."},
+            "channel_index": {"type": "integer", "description": "Channel index, if you must target a slot rather than a name. NOT defaulted: omitting both this and channel_name makes a broadcast fail rather than fall back to channel 0 (public Primary). For pki sends this is only the routing slot, not the encryption key."},
             "dest_id": {"type": "string", "description": "Destination node id like '!a1b2c3d4'. Omit to broadcast to the channel."},
             "pki": {"type": "boolean", "description": "Encrypt end-to-end to the recipient's public key (requires dest_id). Use for private direct messages."},
             "want_ack": {"type": "boolean", "description": "Request reliable delivery (firmware retries + ack/nak). Default true; set false for fire-and-forget."},
