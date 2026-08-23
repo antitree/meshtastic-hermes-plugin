@@ -45,9 +45,54 @@ optional_env:
       about the weather') does NOT count. The mention is stripped before the text
       reaches the agent. DIRECT MESSAGES are always answered and never need a
       mention. Turning this off is what lets two bots on one channel reply to each
-      other forever; this plugin has no rate limit or loop detection, and LoRa is
-      shared, regulated spectrum.
+      other; the transmit rate limiter (MESHTASTIC_MAX_SENDS_PER_MINUTE and friends)
+      now BOUNDS that loop rather than letting it run away, but it does not stop the
+      exchange from starting, and LoRa is shared, regulated spectrum. Gating is still
+      the right control; the limiter is the backstop.
     prompt: "Require channel messages to start with this node's name? (true/false)"
+    password: false
+  # Transmit rate limiting — the airtime LOOP BREAKER. Mention gating decides WHICH
+  # messages get an answer; this decides HOW MUCH this node may transmit, which
+  # nothing previously bounded. One shared limiter covers gateway replies, direct
+  # tool sends and the bridge harness alike, and every transmitted PACKET costs one
+  # token — including each part of a chunked multi-part reply, because each part is
+  # real airtime on a shared, legally regulated medium. All four fail CLOSED: an
+  # unparseable or non-positive value falls back to the conservative default, and
+  # there is deliberately no way to spell "unlimited".
+  - name: MESHTASTIC_MAX_SENDS_PER_MINUTE
+    description: >-
+      Maximum outbound PACKETS per minute across every destination and every path
+      (gateway replies, meshtastic_send_text tool calls, bridge --send). Each part of
+      a multi-part reply counts separately, so one long answer cannot slip a flood
+      through on a single token. A refused send returns rate_limited and transmits
+      nothing at all. Default: 10. An invalid or non-positive value falls back to the
+      default rather than disabling the limit.
+    prompt: "Max sends per minute, all destinations (default 10)"
+    password: false
+  - name: MESHTASTIC_MAX_CHANNEL_SENDS_PER_MINUTE
+    description: >-
+      Maximum broadcast packets per minute on any ONE channel index. Independent of
+      the DM budget, so answering direct messages never consumes a channel's
+      broadcast allowance and vice versa. Default: 5. Invalid values fall back to the
+      default.
+    prompt: "Max broadcasts per minute per channel (default 5)"
+    password: false
+  - name: MESHTASTIC_MAX_DM_SENDS_PER_MINUTE
+    description: >-
+      Maximum direct-message packets per minute to any ONE peer node id, so a single
+      chatty peer cannot consume every other peer's allowance. Default: 6. Invalid
+      values fall back to the default.
+    prompt: "Max DM sends per minute per peer (default 6)"
+    password: false
+  - name: MESHTASTIC_REPLY_COOLDOWN_SECONDS
+    description: >-
+      Minimum seconds between two consecutive conversational TURNS to the same
+      destination. This is what breaks a tight bot-to-bot ping-pong before the
+      per-minute buckets even fill. Parts 2..n of one multi-part reply are exempt
+      from the cooldown — they still cost a token each — because otherwise any reply
+      longer than one 200-byte packet would be undeliverable. Default: 5. Invalid
+      values fall back to the default.
+    prompt: "Cooldown seconds between turns to one destination (default 5)"
     password: false
   - name: MESHTASTIC_HERMES_DB
     description: "Path to the node-interaction knowledge-base SQLite file (defaults under $HERMES_HOME)."

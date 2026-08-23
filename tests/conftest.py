@@ -50,6 +50,12 @@ def _reset_shared_state():
 def _purge():
     from meshtastic_hermes.connection import _SHARED_KEY
 
+    # The transmit limiter lives in its own fixed sys.modules slot (see
+    # rate_limit.py) and is process-global for exactly the same reason. Without
+    # this, tokens spent by one test are still spent for the next one, and a test
+    # that sends a handful of messages fails only when run after another sender.
+    _drop_rate_limit_state()
+
     st = sys.modules.get(_SHARED_KEY)
     if st is not None:
         mgr = getattr(st, "manager", None)
@@ -73,3 +79,9 @@ def _purge():
         pub.unsubAll("meshtastic.connection.lost")
     except Exception:  # noqa: BLE001, S110 - teardown must never fail a test
         pass
+
+
+def _drop_rate_limit_state():
+    from meshtastic_hermes import rate_limit
+
+    sys.modules.pop(rate_limit._SHARED_KEY, None)

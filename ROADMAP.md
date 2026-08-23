@@ -74,22 +74,53 @@ error branches to hit a number, which is the opposite of the intent.
 Carried over from the handoff; these are missing *features*, and the tests
 correctly document today's behavior rather than the desired behavior.
 
-- **Transmit rate limiting: in progress.** Tracked as item 3 of
-  `docs/security-remediation.md`. A shared process-wide limiter covering every
-  outbound path (tool sends, adapter replies, bridge `--send`), with per-global,
-  per-DM and per-channel buckets and a reply cooldown. This supersedes the
-  earlier decision not to build an airtime layer: the security remediation plan
-  requires it as a loop breaker, and it must cover manual tool sends, which the
-  earlier framing did not.
+- **Transmit rate limiting: done.** Item 3 of `docs/security-remediation.md`,
+  shipped as `meshtastic_hermes/rate_limit.py`. This superseded the earlier
+  decision not to build an airtime layer: the remediation plan requires it as a
+  loop breaker, and it had to cover manual tool sends, which the earlier framing
+  did not.
+
+  What actually shipped:
+
+  - One process-wide limiter covering every outbound path — `meshtastic_send_text`,
+    gateway adapter replies, and bridge `--send`. All three funnel through
+    `tools.send_text`, so the check has a single choke point, placed after item 1's
+    send policy authorizes the destination and before any `iface.sendData`.
+  - Sliding-window buckets keyed three ways — global, `dm:<node id>`, and
+    `ch:<index>` — plus a per-destination cooldown. Every applicable bucket must
+    admit a packet, and a refusal charges nothing.
+  - **One token per transmitted packet, not per logical reply.** A chunked reply
+    spends a token per part, because each part is real airtime. Parts 2..n are
+    exempt from the *cooldown* (they are one turn, not several) but are still
+    charged; running out mid-reply drops the remaining parts and reports failure.
+  - Shared across both copies of the package via a fixed `sys.modules` slot, the
+    same construction `connection.py` uses — Hermes loads the tools plugin under a
+    mangled name while the adapter imports `meshtastic_hermes` top-level, so a
+    module global would have given each path its own bucket.
+  - `MESHTASTIC_MAX_SENDS_PER_MINUTE` (10), `MESHTASTIC_MAX_CHANNEL_SENDS_PER_MINUTE`
+    (5), `MESHTASTIC_MAX_DM_SENDS_PER_MINUTE` (6),
+    `MESHTASTIC_REPLY_COOLDOWN_SECONDS` (5). All fail closed — an invalid or
+    non-positive value falls back to the default, and there is no "unlimited".
+  - Tools return `{"error": "rate_limited", "retry_after_s": …, "scope": …}`;
+    adapter replies return `SendResult(success=False, error="rate_limited")` and log
+    the scope and retry delay. The effective budget is logged at every connect.
+  - Monotonic time, injected as `time_fn`, so the tests are deterministic under
+    fake time and a wall-clock step cannot mint free transmissions.
+
+  Still open: there is no bot-to-bot *detection*, only a bound on the loop. And the
+  limiter is per-minute, so it does not give the test rig the per-run budget
+  `--transmit` needs (see below).
 - **Mention gating.** `MESHTASTIC_REQUIRE_MENTION` (on by default) requires a
   channel message to start with this node's short name, long name, or node id.
   DMs are always answered. This is a gate on which messages are answered, not a
-  transmission budget — see above.
+  transmission budget — the budget is the rate limiter above. Both matter: gating
+  keeps the exchange from starting, the limiter keeps it from running away.
 - **The rig's transmit check is unimplemented.** `--transmit` exists but reports
   `NOT_IMPLEMENTED`: both candidate send paths either open a second TCP
-  connection to a node that accepts one client, or drive the live gateway. With
-  the airtime layer dropped, enabling it would need its own bound — e.g. a hard
-  cap on sends per run — rather than waiting on rate limiting that is not coming.
+  connection to a node that accepts one client, or drive the live gateway on a
+  real channel. The plugin's rate limiter does not unblock it — that is a
+  per-minute ceiling, and the rig needs a per-run cap it enforces itself, plus a
+  dedicated test channel on the radio.
 
 ## Security scanner — not tracked
 
