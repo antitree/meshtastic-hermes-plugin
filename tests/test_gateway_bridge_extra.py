@@ -76,11 +76,15 @@ def test_parse_channel_spec_forms():
     assert gb.parse_channel_spec("   ") is None
     assert gb.parse_channel_spec("all") == gb.ALL_CHANNELS
     assert gb.parse_channel_spec("ALL") == gb.ALL_CHANNELS
-    assert gb.parse_channel_spec("1, 2") == {1, 2}
-    assert gb.parse_channel_spec(3) == {3}
-    # Unparseable entries are skipped, not fatal; an all-junk spec means "no channels".
-    assert gb.parse_channel_spec("1,x,2") == {1, 2}
-    assert gb.parse_channel_spec("x,y") is None
+    assert gb.parse_channel_spec("1, 2").indices == {1, 2}
+    assert gb.parse_channel_spec(3).indices == {3}
+    # Non-numeric entries are channel NAMES now — kept for resolution against the
+    # radio's channel table, not silently discarded.
+    mixed = gb.parse_channel_spec("1,x,2")
+    assert mixed.indices == {1, 2}
+    assert mixed.names == ("x",)
+    assert gb.parse_channel_spec("x,y") == gb.ChannelSpec(names=("x", "y"))
+    # Empty entries still collapse to "no channels configured".
     assert gb.parse_channel_spec(",,") is None
 
 

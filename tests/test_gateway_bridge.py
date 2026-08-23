@@ -91,12 +91,18 @@ def test_channel_allowlist_dms_plus_private_only():
 
 
 def test_parse_channel_spec():
+    # parse_channel_spec now returns an UNRESOLVED ChannelSpec (names + legacy
+    # indices) because channel names cannot become indices without the radio's
+    # channel table. Resolution is resolve_channel_spec().
     assert gb.parse_channel_spec(None) is None
     assert gb.parse_channel_spec("") is None
     assert gb.parse_channel_spec("all") == gb.ALL_CHANNELS
-    assert gb.parse_channel_spec("1") == {1}
-    assert gb.parse_channel_spec("1, 2 ,3") == {1, 2, 3}
-    assert gb.parse_channel_spec("x,2") == {2}  # bad entries ignored
+    assert gb.parse_channel_spec("1").indices == {1}
+    assert gb.parse_channel_spec("1, 2 ,3").indices == {1, 2, 3}
+    # A non-numeric entry is a channel NAME now, not a silently-discarded typo.
+    spec = gb.parse_channel_spec("x,2")
+    assert spec.names == ("x",)
+    assert spec.indices == {2}
 
 
 def test_process_inbound_ignores_own_message():

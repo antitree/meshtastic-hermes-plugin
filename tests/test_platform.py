@@ -38,7 +38,8 @@ def test_split_text_respects_byte_limit():
 def test_allowed_channels_from_env(monkeypatch):
     monkeypatch.delenv("MESHTASTIC_REPLY_ALL", raising=False)
     monkeypatch.setenv("MESHTASTIC_REPLY_CHANNELS", "1,2")
-    assert adapter._allowed_channels_from_env() == {1, 2}
+    # Env parsing now yields an unresolved spec; indices survive as legacy input.
+    assert adapter._allowed_channels_from_env().indices == {1, 2}
 
     monkeypatch.setenv("MESHTASTIC_REPLY_ALL", "true")
     assert adapter._allowed_channels_from_env() == gb.ALL_CHANNELS

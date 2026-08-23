@@ -237,11 +237,21 @@ def test_connect_without_host_sets_fatal_error(adapter_mod, monkeypatch):
 class _FakeManager:
     """Stands in for ConnectionManager without opening a socket."""
 
-    def __init__(self, *, connected=True, node_id="!aabbccdd"):
+    def __init__(self, *, connected=True, node_id="!aabbccdd", channels=None):
         self._connected = connected
         self._node_id = node_id
         self.connect_calls: list = []
         self.disconnect_calls = 0
+        # The radio's channel table, as ConnectionManager.channel_table() returns it.
+        # Mutate it between connects to simulate the operator editing the radio.
+        self.channels = channels if channels is not None else [
+            {"index": 0, "name": "", "role": 1}
+        ]
+        self.channel_table_calls = 0
+
+    def channel_table(self):
+        self.channel_table_calls += 1
+        return list(self.channels)
 
     def connect(self, host, port=4403):
         self.connect_calls.append((host, port))

@@ -350,7 +350,15 @@ def _cmd_bridge(ctx: FakeContext, args) -> int:
     mgr = get_manager()
     print(_pretty(json.dumps(mgr.connect(host))))
     my = mgr.my_node_id()
-    allowed_channels = gb.ALL_CHANNELS if args.all else gb.parse_channel_spec(args.channels)
+    if args.all:
+        allowed_channels = gb.ALL_CHANNELS
+    else:
+        # Channel NAMES need the radio's channel table to become indices; we are
+        # connected, so resolve now (the same seam the platform adapter uses).
+        spec = gb.parse_channel_spec(args.channels)
+        allowed_channels, resolved = gb.resolve_channel_spec(spec, mgr.channel_table())
+        for name, idx in sorted(resolved.items()):
+            print(f"reply channel: {name} -> {idx}", file=sys.stderr)
 
     def on_rx(packet, interface=None):
         try:
@@ -427,7 +435,14 @@ def main(argv=None) -> int:
     p_bridge.add_argument("seconds", nargs="?", type=int, default=300)
     p_bridge.add_argument("--send", action="store_true", help="Actually transmit replies")
     p_bridge.add_argument("--all", action="store_true", help="Reply on every channel (incl. public Primary)")
-    p_bridge.add_argument("--channels", help="DMs + these channel indices, e.g. '1' or '1,2' (your private channels)")
+    p_bridge.add_argument(
+        "--channels",
+        help=(
+            "DMs + these channels, by NAME e.g. 'in.secure' (comma-separated). "
+            "Numeric indices still work but are legacy: indices are slots that "
+            "move when channels are reordered."
+        ),
+    )
 
     ns = parser.parse_args(argv)
     dispatch = {
