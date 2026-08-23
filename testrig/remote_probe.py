@@ -445,7 +445,7 @@ def check_mention_gating(scratch: str, hermes_home: str) -> dict:
         return _result("mention_gating", "FAIL", f"import failed: {exc!r}")
 
     gate = None
-    for cand in ("mentions_us", "is_mention", "should_reply_to_channel", "_mentions_us"):
+    for cand in ("match_mention", "mentions_us", "is_mention", "should_reply_to_channel"):
         if hasattr(gb, cand):
             gate = getattr(gb, cand)
             break
@@ -455,8 +455,8 @@ def check_mention_gating(scratch: str, hermes_home: str) -> dict:
             "mention_gating",
             "NOT_IMPLEMENTED",
             "no mention-gating helper found in meshtastic_hermes.gateway_bridge and "
-            "MESHTASTIC_REQUIRE_MENTION is not referenced in the tree under test "
-            "(PR #10 is not merged into this branch), so there is nothing to verify",
+            "MESHTASTIC_REQUIRE_MENTION is not referenced in the tree under test, "
+            "so there is nothing to verify",
         )
 
     if not identity:
@@ -479,13 +479,21 @@ def check_mention_gating(scratch: str, hermes_home: str) -> dict:
         ("node_id", f"{node_id} ping"),
     ):
         try:
-            if not gate(text, identity):
+            hit = gate(text, short_name=short, long_name=long_name, node_id=node_id)
+            if hit is None:
                 failures.append(f"{label}: {text!r} did not register as a mention")
         except Exception as exc:
             return _result("mention_gating", "FAIL", f"gate raised on {label}: {exc!r}")
     try:
-        if gate("just some chatter", identity):
+        if gate(
+            "just some chatter", short_name=short, long_name=long_name, node_id=node_id
+        ) is not None:
             failures.append("unaddressed text was treated as a mention")
+        # Mid-sentence must NOT match -- the whole point of the feature.
+        if gate(
+            f"ask {short} about it", short_name=short, long_name=long_name, node_id=node_id
+        ) is not None:
+            failures.append("mid-sentence mention was treated as a mention")
     except Exception as exc:
         return _result("mention_gating", "FAIL", f"gate raised on negative case: {exc!r}")
 
