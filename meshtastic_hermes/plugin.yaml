@@ -1,5 +1,5 @@
 name: meshtastic
-version: "0.1.11"
+version: "0.1.12"
 description: >-
   Interact with a Meshtastic LoRa mesh over TCP/IP — send messages, inspect
   nodes/channels, and build a persistent node-interaction knowledge base from

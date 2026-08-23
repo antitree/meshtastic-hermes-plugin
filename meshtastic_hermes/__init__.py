@@ -16,7 +16,7 @@ from . import schemas, tools
 from .connection import get_manager
 from .observer import get_observer
 
-__version__ = "0.1.11"
+__version__ = "0.1.12"
 
 logger = logging.getLogger(__name__)
 
