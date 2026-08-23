@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+import sys
+import types
 
 import yaml
 
@@ -76,8 +78,49 @@ def test_tools_manifest_env_vars_are_read_by_the_code():
     sources = "".join(
         p.read_text() for p in (REPO / "meshtastic_hermes").glob("*.py")
     )
-    for entry in manifest.get("requires_env", []):
-        assert entry["name"] in sources, entry["name"]
+    declared = [
+        e["name"]
+        for key in ("requires_env", "optional_env")
+        for e in manifest.get(key, [])
+    ]
+    assert declared, "expected the tools manifest to declare some env vars"
+    for name in declared:
+        assert name in sources, name
+
+
+def test_tools_manifest_declares_nothing_as_required():
+    """The tools plugin has no hard prerequisites, so `requires_env` must be empty.
+
+    Every radio tool takes an explicit host argument and the knowledge-base tools
+    need no radio at all. Hermes treats `requires_env` as install-blocking and
+    echoes it back from `hermes setup` as "Set these env vars in ...", so listing
+    an optional var there nags the user about something that is not missing.
+    Both vars were previously under `requires_env` while their own descriptions
+    said "Optional."
+    """
+    manifest = _load(TOOLS_MANIFEST)
+    assert not manifest.get("requires_env"), (
+        "the tools plugin must not declare requires_env; use optional_env"
+    )
+    optional = {e["name"] for e in manifest.get("optional_env", [])}
+    assert {"MESHTASTIC_HOST", "MESHTASTIC_HERMES_DB"} <= optional
+
+
+def test_only_one_manifest_declares_meshtastic_host_as_required():
+    """A var in two manifests' `requires_env` prints its setup hint twice.
+
+    MESHTASTIC_HOST is genuinely required only by the platform adapter, which
+    cannot connect to a radio without it.
+    """
+    requiring = [
+        path.parent.name
+        for path in (TOOLS_MANIFEST, PLATFORM_MANIFEST)
+        if any(
+            e.get("name") == "MESHTASTIC_HOST"
+            for e in (_load(path).get("requires_env") or [])
+        )
+    ]
+    assert requiring == ["meshtastic_platform"], requiring
 
 
 # ----------------------------------------------------------------------
@@ -233,3 +276,102 @@ def test_register_without_the_gateway_runtime_still_bundles_skills(monkeypatch, 
     adapter.register(Ctx())
     assert "mesh-responder" in captured
     assert "gateway.platforms.base unavailable" in caplog.text
+
+
+# ----------------------------------------------------------------------
+# `hermes setup gateway` -> Meshtastic
+# ----------------------------------------------------------------------
+
+
+def test_platform_registers_a_setup_fn():
+    """Without a `setup_fn`, Hermes prints a static hint that lies about state.
+
+    `hermes_cli/gateway.py::_configure_platform` dispatches to the registry
+    entry's `setup_fn` first; with none it falls through to a branch that prints
+    "Set these env vars in ~/.hermes/.env: <required_env>" *unconditionally* --
+    it never calls `get_env_value`, so it claims MESHTASTIC_HOST is unset even
+    while the adapter is connected with it. Registering a `setup_fn` takes over
+    that branch.
+    """
+    source = (REPO / "meshtastic_platform" / "adapter.py").read_text()
+    assert "setup_fn=interactive_setup" in source
+
+    from meshtastic_platform import adapter
+
+    assert callable(adapter.interactive_setup)
+
+
+def test_interactive_setup_reports_an_already_configured_host(monkeypatch, capsys):
+    """The regression under test: a SET host must not be reported as missing."""
+    from meshtastic_platform import adapter
+
+    saved: dict = {}
+    env = {"MESHTASTIC_HOST": "10.2.2.60"}
+    fake_config = types.SimpleNamespace(
+        get_env_value=env.get,
+        save_env_value=lambda k, v: saved.__setitem__(k, v),
+        get_env_path=lambda: "/home/u/.hermes/profiles/meshy/.env",
+    )
+    monkeypatch.setitem(sys.modules, "hermes_cli", types.ModuleType("hermes_cli"))
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", fake_config)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "")
+
+    adapter.interactive_setup()
+    out = capsys.readouterr().out
+
+    assert "MESHTASTIC_HOST is already set (10.2.2.60)." in out
+    assert "Meshtastic is configured (MESHTASTIC_HOST=10.2.2.60)." in out
+    assert "is NOT configured" not in out
+    assert "/home/u/.hermes/profiles/meshy/.env" in out
+    assert saved == {}, "pressing enter must not overwrite existing values"
+
+
+def test_interactive_setup_saves_a_new_host_and_reports_it(monkeypatch, capsys):
+    from meshtastic_platform import adapter
+
+    env: dict = {}
+    fake_config = types.SimpleNamespace(
+        get_env_value=env.get,
+        save_env_value=lambda k, v: env.__setitem__(k, v),
+        get_env_path=lambda: "/home/u/.hermes/profiles/meshy/.env",
+    )
+    monkeypatch.setitem(sys.modules, "hermes_cli", types.ModuleType("hermes_cli"))
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", fake_config)
+
+    answers = iter(["10.2.2.60", "", "", ""])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+
+    adapter.interactive_setup()
+    out = capsys.readouterr().out
+
+    assert env == {"MESHTASTIC_HOST": "10.2.2.60"}
+    assert "Meshtastic is configured (MESHTASTIC_HOST=10.2.2.60)." in out
+
+
+def test_interactive_setup_reports_a_genuinely_missing_host(monkeypatch, capsys):
+    from meshtastic_platform import adapter
+
+    fake_config = types.SimpleNamespace(
+        get_env_value=lambda _k: None,
+        save_env_value=lambda k, v: None,
+        get_env_path=lambda: "/home/u/.hermes/profiles/meshy/.env",
+    )
+    monkeypatch.setitem(sys.modules, "hermes_cli", types.ModuleType("hermes_cli"))
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", fake_config)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "")
+
+    adapter.interactive_setup()
+    out = capsys.readouterr().out
+
+    assert "MESHTASTIC_HOST is not set" in out
+    assert "Meshtastic is NOT configured" in out
+
+
+def test_setup_wizard_covers_every_var_the_platform_manifest_declares():
+    """Anything the manifest promises to configure must be asked for."""
+    from meshtastic_platform import adapter
+
+    asked = {name for name, _label, _required in adapter._SETUP_ENV_VARS}
+    manifest = _load(PLATFORM_MANIFEST)
+    required = {e["name"] for e in manifest.get("requires_env", [])}
+    assert required <= asked, required - asked

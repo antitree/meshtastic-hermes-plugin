@@ -24,11 +24,21 @@ provides_hooks:
   - on_session_start
   - on_session_end
 
-# Optional environment variables (prompted during `hermes plugins install`).
-requires_env:
+# This plugin has NO hard requirements: every tool that needs a radio takes an
+# explicit host argument, and the knowledge-base tools work with no radio at all.
+# So there is deliberately no `requires_env:` block here.
+#
+# `requires_env` entries are treated by Hermes as install-blocking prerequisites
+# and are echoed back by `hermes setup` as "Set these env vars"; declaring an
+# optional var there produces a nag for something that is not actually missing.
+# MESHTASTIC_HOST is declared as REQUIRED by the sibling meshtastic_platform
+# manifest, where it genuinely is required (the gateway adapter cannot connect
+# without it) — declaring it in both places is what makes the setup hint appear
+# twice.
+optional_env:
   - name: MESHTASTIC_HOST
-    description: "Default Meshtastic node host/IP for TCP auto-connect (e.g. 192.168.1.50). Optional."
+    description: "Default Meshtastic node host/IP for TCP auto-connect (e.g. 192.168.1.50). Optional: tools accept an explicit host."
     secret: false
   - name: MESHTASTIC_HERMES_DB
-    description: "Path to the SQLite knowledge-base file. Defaults to ~/.hermes/meshtastic_kb.sqlite. Optional."
+    description: "Path to the SQLite knowledge-base file. Defaults to $HERMES_HOME/meshtastic_kb.sqlite. Optional."
     secret: false

@@ -299,6 +299,95 @@ def _env_enablement():
     return {"host": host}
 
 
+# Environment variables this platform reads, in the order the wizard asks for them.
+# (name, prompt, required)
+_SETUP_ENV_VARS = [
+    ("MESHTASTIC_HOST", "Meshtastic node host/IP (TCP, e.g. 192.168.1.50)", True),
+    (
+        "MESHTASTIC_REPLY_CHANNELS",
+        "Reply channel indices, comma-separated (blank = DMs only)",
+        False,
+    ),
+    (
+        "MESHTASTIC_ALLOWED_USERS",
+        "Allowed node ids, comma-separated (e.g. !a696579c)",
+        False,
+    ),
+    ("MESHTASTIC_ALLOW_ALL_USERS", "Allow ANY node to talk to the agent? (true/false)", False),
+]
+
+
+def interactive_setup() -> None:
+    """Registry ``setup_fn`` for ``hermes setup gateway`` -> Meshtastic.
+
+    Without this, Hermes' ``_configure_platform`` falls through to its
+    no-setup-helper branch, which prints ``Set these env vars in
+    ~/.hermes/.env: MESHTASTIC_HOST`` *unconditionally* -- it never consults
+    ``get_env_value``, so it says the var is unset even when it is set and the
+    adapter is happily connected. Supplying a ``setup_fn`` takes over that
+    branch entirely and lets us report the real state.
+
+    Values are written with ``hermes_cli.config.save_env_value``, which targets
+    the ACTIVE profile's ``.env`` (``$HERMES_HOME/.env``) -- for a profile named
+    ``meshy`` that is ``~/.hermes/profiles/meshy/.env``, not ``~/.hermes/.env``.
+    """
+    try:
+        from hermes_cli.config import get_env_value, save_env_value
+    except ImportError:  # pragma: no cover - only outside the Hermes runtime
+        print(
+            "hermes_cli.config unavailable; set MESHTASTIC_HOST manually in "
+            "$HERMES_HOME/.env"
+        )
+        return
+
+    env_path = _active_env_path()
+
+    print()
+    print("Meshtastic setup")
+    print("----------------")
+    print(f"Values are saved to {env_path}")
+    print()
+
+    for name, label, required in _SETUP_ENV_VARS:
+        current = get_env_value(name)
+        if current:
+            print(f"  {name} is already set ({current}).")
+        elif required:
+            print(f"  {name} is not set — the adapter stays dormant without it.")
+
+        suffix = " [keep current]" if current else ("" if required else " [blank = skip]")
+        try:
+            value = input(f"{label}{suffix}: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if value:
+            save_env_value(name, value)
+            print(f"  Saved {name}.")
+
+    host = get_env_value("MESHTASTIC_HOST")
+    print()
+    if host:
+        print(f"Meshtastic is configured (MESHTASTIC_HOST={host}).")
+        print("Restart the gateway to pick up changes.")
+    else:
+        print("Meshtastic is NOT configured — MESHTASTIC_HOST is still unset.")
+        print(f"Set it in {env_path} and re-run this wizard.")
+
+
+def _active_env_path() -> str:
+    """Best-effort path of the .env the active Hermes profile actually uses."""
+    try:
+        from hermes_cli.config import get_env_path
+
+        return str(get_env_path())
+    except Exception:
+        home = os.getenv("HERMES_HOME")
+        if home:
+            return str(Path(home) / ".env")
+        return "~/.hermes/.env"
+
+
 def register(ctx):
     """Plugin entry point: called once by the Hermes plugin system."""
     from meshtastic_hermes.connection import enable_debug_logging
@@ -345,6 +434,9 @@ def register(ctx):
         validate_config=validate_config,
         required_env=["MESHTASTIC_HOST"],
         install_hint="Install meshtastic-hermes-plugin with pip (bundles the meshtastic radio stack)",
+        # Without a setup_fn, `hermes setup gateway` falls back to a static
+        # "Set these env vars" hint that never checks whether they ARE set.
+        setup_fn=interactive_setup,
         env_enablement_fn=_env_enablement,
         cron_deliver_env_var="MESHTASTIC_HOST",
         # User authorization (the gateway gates who may talk to the agent). Without

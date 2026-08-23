@@ -352,3 +352,43 @@ list`) for verbose discovery logs; ensure it's enabled — `plugins.enabled` in
   `pip install meshtastic` (pip-based installs of this package pull it automatically).
 - **Connect fails** — verify the node IP and that TCP port `4403` is reachable
   (`nc -z <host> 4403`).
+- **`hermes setup` says "Set these env vars in ~/.hermes/.env: MESHTASTIC_HOST" even
+  though it IS set** — and the gateway log on the same run says
+  `meshtastic-platform registered (MESHTASTIC_HOST=10.2.2.60, ...)`. That banner is not
+  a check; it is Hermes' fallback for a platform plugin that registers no setup helper
+  (`hermes_cli/gateway.py::_configure_platform`), and it prints the declared
+  `required_env` list *unconditionally* — it never reads the value, so it says the same
+  thing whether or not the var is set. This plugin now registers a real `setup_fn`, so
+  `hermes setup gateway` → Meshtastic reports the actual state ("MESHTASTIC_HOST is
+  already set (10.2.2.60)") and prints the exact file it writes to. If you still see the
+  old banner, you are running an older build of the plugin — upgrade it.
+  The banner also appeared **twice** because both `plugin.yaml` manifests declared
+  `MESHTASTIC_HOST`; only `meshtastic_platform` does now.
+
+- **Which `.env` file do I put `MESHTASTIC_HOST` in when I use Hermes profiles?** The
+  one belonging to the profile the plugin is installed in — Hermes reads
+  `$HERMES_HOME/.env`, and each named profile has its own `HERMES_HOME`:
+
+  | profile | `HERMES_HOME` | env file |
+  | --- | --- | --- |
+  | `default` | `~/.hermes` | `~/.hermes/.env` |
+  | `meshy` | `~/.hermes/profiles/meshy` | `~/.hermes/profiles/meshy/.env` |
+
+  So if you installed this plugin into a profile named `meshy`, the variable belongs in
+  `~/.hermes/profiles/meshy/.env` — putting it in `~/.hermes/.env` configures the
+  `default` profile instead, where the plugin is not even enabled. Check which profile
+  is active with `hermes profile list`, and confirm the path Hermes will actually write
+  to with `hermes setup gateway` → Meshtastic, which now prints it.
+
+  An **exported shell variable also works** (Hermes' `get_env_value` checks
+  `os.environ` before falling back to the `.env` file), so `export MESHTASTIC_HOST=...`
+  in your shell, a systemd `Environment=`, or a NixOS `environment` setting all satisfy
+  it — but only for processes that inherit it. The gateway usually runs as a
+  **detached systemd/launchd service** that does *not* inherit your interactive shell,
+  so a var exported only in your terminal will satisfy `hermes setup` while the running
+  gateway never sees it. Prefer the profile's `.env` file, which both paths read.
+
+  If a non-default profile is active but `HERMES_HOME` is unset in a spawned process,
+  Hermes prints a `[HERMES_HOME fallback]` warning to stderr and silently uses the
+  `default` profile. Treat that warning as "my env vars are being read from the wrong
+  profile".
