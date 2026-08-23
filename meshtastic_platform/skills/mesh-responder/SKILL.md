@@ -31,7 +31,12 @@ node, or a message on an allowed channel.
 - Reply length: aim for one short line; hard cap ~200 bytes per message.
 - Format: plain text only — no markdown, no code fences, minimal punctuation.
 - Optional identity lookups: `meshtastic_kb_neighbors` / `meshtastic_kb_nodes` to recall
-  who a sender is.
+  who a sender is. Both are gated behind `MESHTASTIC_EXPOSE_TRAFFIC_METADATA` and return
+  counts only by default — answer from the message itself rather than treating a
+  `traffic_metadata_redacted` response as an error worth retrying or reporting on the air.
+- Never put another node's position into a reply. Coordinates are withheld unless the
+  operator set `MESHTASTIC_EXPOSE_LOCATION`, and a mesh reply is the last place to
+  broadcast someone's location even when they are not.
 
 ## Procedure
 

@@ -82,6 +82,24 @@ optional_env:
   - name: MESHTASTIC_REPLY_COOLDOWN_SECONDS
     description: "Minimum seconds between two consecutive conversational turns to the same destination. This is what breaks a tight bot-to-bot ping-pong before the per-minute buckets even fill. Parts 2..n of one multi-part reply are exempt from the cooldown (they still cost a token each). Default: 5. Invalid values fall back to the default."
     secret: false
+  # Read-tool privacy gates. Items 1-3 bound what this plugin TRANSMITS; these bound
+  # what it DISCLOSES. Every read tool hands its result to the model, and the model's
+  # output goes wherever the conversation goes. The mesh is shared with other people
+  # who broadcast so their radios could route — not so an agent could profile them.
+  # All three are EXPOSURE switches: they default OFF and require an explicit truthy
+  # value (1/true/yes/on), so a typo redacts rather than discloses. Redaction happens
+  # in the tool-response layer only — the observer buffer and the SQLite KB keep
+  # complete records, because the gateway needs message text to answer it and the KB
+  # needs full rows to compute its summaries.
+  - name: MESHTASTIC_EXPOSE_LOCATION
+    description: "Set to true to include lat/lon/altitude in meshtastic_list_nodes, meshtastic_node_info, meshtastic_device_metrics and meshtastic_kb_nodes. Default: false (coordinates omitted, response marked location_redacted). These are the real-world locations of real people on a shared mesh, and of this gateway's own operator. Applies identically to the live radio node DB and to the lat/lon columns persisted in the knowledge base — the two are independent sources of the same data."
+    secret: false
+  - name: MESHTASTIC_EXPOSE_RECENT_TEXT
+    description: "Set to true to let meshtastic_recent_messages return decoded message BODIES. Default: false — rows carry sender, recipient, channel, timestamp, text_len and a short text_sha256 instead. These are other people's channel and direct messages that this node decrypted; the buffer keeps them, the tool simply does not disclose them. Independent of MESHTASTIC_DEBUG_LOG_TEXT, which governs the operator's own journal and never widens a tool response."
+    secret: false
+  - name: MESHTASTIC_EXPOSE_TRAFFIC_METADATA
+    description: "Set to true to return the DETAILED knowledge-base views: per-node rows (meshtastic_kb_nodes), per-packet interaction records (meshtastic_kb_interactions), inferred neighbor graphs (meshtastic_kb_neighbors) and top talkers. Default: false — those tools return summary counts only, marked traffic_metadata_redacted. Aggregate counts from meshtastic_kb_summary stay available either way because they name and locate nobody. Enabling this does NOT enable coordinates: MESHTASTIC_EXPOSE_LOCATION is a separate gate that still applies to KB rows."
+    secret: false
   - name: MESHTASTIC_HERMES_DB
     description: "Path to the SQLite knowledge-base file. Defaults to $HERMES_HOME/meshtastic_kb.sqlite. Optional."
     secret: false

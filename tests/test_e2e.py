@@ -122,7 +122,11 @@ def radio(monkeypatch):
 # ----------------------------------------------------------------------
 
 
-def test_e2e_received_text_reaches_the_tools_and_the_kb(radio):
+def test_e2e_received_text_reaches_the_tools_and_the_kb(radio, monkeypatch):
+    # Pipeline test: packet -> observer -> tools/KB. Bodies are gated behind
+    # MESHTASTIC_EXPOSE_RECENT_TEXT since item 4, so opt in to keep asserting the
+    # body arrived intact; the gate itself lives in test_privacy_gates.py.
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_RECENT_TEXT", "true")
     radio.deliver_text("hello from the mesh")
 
     recent = json.loads(tools.recent_messages({}))["messages"]
@@ -135,7 +139,12 @@ def test_e2e_received_text_reaches_the_tools_and_the_kb(radio):
     assert summary["nodes"] == 1
 
 
-def test_e2e_encrypted_traffic_is_counted_but_never_surfaced(radio):
+def test_e2e_encrypted_traffic_is_counted_but_never_surfaced(radio, monkeypatch):
+    # Opt in to bodies so the assertion still distinguishes the DECODED message from
+    # the encrypted one; that distinction is what this test exists to prove. It also
+    # inspects per-packet interaction rows, gated behind traffic metadata by item 4.
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_RECENT_TEXT", "true")
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_TRAFFIC_METADATA", "true")
     radio.deliver_encrypted()
     radio.deliver_text("plain")
 
@@ -155,7 +164,10 @@ def test_e2e_encrypted_traffic_is_counted_but_never_surfaced(radio):
     assert enc["channel"] == 3
 
 
-def test_e2e_traffic_builds_a_node_graph(radio):
+def test_e2e_traffic_builds_a_node_graph(radio, monkeypatch):
+    # The KB node/neighbor views are gated behind MESHTASTIC_EXPOSE_TRAFFIC_METADATA
+    # since item 4; this test is about the GRAPH being built, so it opts in.
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_TRAFFIC_METADATA", "true")
     radio.deliver_text("a", from_id="!11112222", to_id=MY_ID)
     radio.deliver_text("b", from_id="!33334444", to_id="^all", channel=1)
     radio.deliver_text("c", from_id="!11112222", to_id=MY_ID)
@@ -172,6 +184,9 @@ def test_e2e_traffic_builds_a_node_graph(radio):
 
 def test_e2e_observation_survives_a_reconnect(radio, monkeypatch):
     """A drop must not lose the observer's subscription or the accumulated KB."""
+    # Bodies are what identify which messages survived the drop, so opt in past the
+    # item-4 recent-text gate.
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_RECENT_TEXT", "true")
     radio.deliver_text("before the drop")
     mgr = connection.get_manager()
 

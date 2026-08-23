@@ -179,6 +179,12 @@ def test_enable_readline_on_a_tty(monkeypatch, tmp_path):
 def test_watch_prints_only_new_messages(ctx, monkeypatch, capsys):
     from meshtastic_hermes.observer import get_observer
 
+    # This test is about NEW-message detection (is "fresh" printed once and
+    # "already seen" not re-printed?). The watch loop dispatches the registered
+    # recent_messages handler, which redacts bodies by default since item 4, so opt
+    # in to keep asserting on the body. The default-redacted behavior of the same
+    # loop is asserted by test_watch_redacts_bodies_by_default below.
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_RECENT_TEXT", "true")
     obs = get_observer()
     obs.on_receive(
         {
@@ -237,6 +243,36 @@ def test_watch_labels_a_channel_broadcast(ctx, monkeypatch, capsys):
 
     m._watch_messages(ctx, 1.0)
     assert "[ch2]" in capsys.readouterr().out
+
+
+def test_watch_redacts_bodies_by_default(ctx, monkeypatch, capsys):
+    """The harness dispatches the REGISTERED handler, so it inherits the gate."""
+    from meshtastic_hermes.observer import get_observer
+
+    monkeypatch.delenv("MESHTASTIC_EXPOSE_RECENT_TEXT", raising=False)
+    obs = get_observer()
+
+    def fake_sleep(_secs):
+        obs.on_receive(
+            {
+                "fromId": "!x",
+                "toId": "^all",
+                "channel": 2,
+                "rxTime": 5.0,
+                "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": "SENTINEL-WATCH-BODY"},
+            }
+        )
+
+    times = iter([0.0, 0.0, 0.5, 99.0])
+    monkeypatch.setattr(m.time, "sleep", fake_sleep)
+    monkeypatch.setattr(m.time, "time", lambda: next(times))
+
+    m._watch_messages(ctx, 1.0)
+    out = capsys.readouterr().out
+    assert "SENTINEL-WATCH-BODY" not in out
+    # ...and it says so, rather than printing a bare None that reads as an empty
+    # message. len(SENTINEL-WATCH-BODY) == 19.
+    assert "<redacted len=19" in out
 
 
 def test_watch_stops_on_keyboard_interrupt(ctx, monkeypatch):
@@ -337,7 +373,10 @@ def test_call_rejects_invalid_json_args(capsys):
     assert "invalid JSON args" in capsys.readouterr().out
 
 
-def test_call_passes_json_args(capsys):
+def test_call_passes_json_args(capsys, monkeypatch):
+    # About ARG PASSING through `call`, not the privacy gate: kb_nodes returns counts
+    # only unless traffic metadata is exposed (item 4), so opt in to see "nodes".
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_TRAFFIC_METADATA", "true")
     assert m.main(["call", "meshtastic_kb_nodes", '{"limit": 1}']) == 0
     assert "nodes" in capsys.readouterr().out
 
