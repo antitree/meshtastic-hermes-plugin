@@ -131,6 +131,101 @@ def _allowed_channels_from_env():
     return _channel_spec_from_env()
 
 
+# Falsey spellings accepted for MESHTASTIC_REQUIRE_MENTION, mirroring the
+# truthy set MESHTASTIC_REPLY_ALL uses ({"1", "true", "yes"}).
+_FALSEY = {"0", "false", "no"}
+
+
+def _require_mention_from_env() -> bool:
+    """Whether a channel message must be ADDRESSED to this node to get a reply.
+
+    Defaults to TRUE. Turning it off makes the bot answer every message on every
+    allowlisted channel, which is how two bots on one channel end up replying to
+    each other forever — see :func:`warn_if_reply_scope_is_unsafe`.
+
+    Only an explicit falsey value ("0"/"false"/"no", any case) disables it;
+    anything else — including an unset var, an empty string, or a typo — leaves
+    gating ON. Failing closed on a typo is deliberate: the failure mode of an
+    accidental "off" is unbounded transmission on regulated spectrum.
+    """
+    raw = os.getenv("MESHTASTIC_REQUIRE_MENTION")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in _FALSEY
+
+
+def _scope_is_broad(allowed_channels) -> str | None:
+    """Describe why the reply scope is broad, or None if it is narrow.
+
+    Broad means: every channel (MESHTASTIC_REPLY_ALL / "all"), or an allowlist
+    that includes channel index 0 — the PUBLIC Primary channel, which every
+    Meshtastic node in radio range shares by default.
+    """
+    from meshtastic_hermes import gateway_bridge as gb
+
+    if allowed_channels == gb.ALL_CHANNELS:
+        return "every channel on the radio (MESHTASTIC_REPLY_ALL / 'all')"
+    if isinstance(allowed_channels, (set, frozenset)) and 0 in allowed_channels:
+        return "the PUBLIC Primary channel (index 0)"
+    return None
+
+
+def warn_if_reply_scope_is_unsafe(allowed_channels, require_mention: bool, *, log=None) -> bool:
+    """Log a prominent WARNING for the unsafe combination; return whether it fired.
+
+    Unsafe means mention gating is OFF *and* the reply scope is broad. In that
+    combination the bot transmits a reply for EVERY message it can decode on those
+    channels — including messages from other bots, whose replies it will then
+    answer in turn. There is no rate limit, no cooldown and no bot-to-bot
+    detection in this plugin, so that is an unbounded transmission loop on a
+    shared, legally regulated RF medium.
+
+    Pure apart from logging, and called on every connect/reconnect so a reconnect
+    after a config change re-states the risk rather than burying it in boot logs.
+    """
+    log = log or logger
+    if require_mention:
+        return False
+    scope = _scope_is_broad(allowed_channels)
+    if scope is None:
+        return False
+
+    log.warning(
+        "\n"
+        "  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+        "  !!  UNSAFE MESHTASTIC REPLY CONFIGURATION - TRANSMISSION LOOP RISK  !!\n"
+        "  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+        "  Mention gating is OFF (MESHTASTIC_REQUIRE_MENTION=false) and the reply\n"
+        "  scope is BROAD: %s.\n"
+        "\n"
+        "  This bot will TRANSMIT A REPLY TO EVERY MESSAGE it can decode on those\n"
+        "  channels - including messages sent by OTHER BOTS. If another bot is\n"
+        "  configured the same way, each reply triggers another reply and the two\n"
+        "  will transmit at each other without end. This plugin has NO rate limit,\n"
+        "  NO cooldown and NO bot-to-bot loop detection to stop it.\n"
+        "\n"
+        "  LoRa is a SHARED, LEGALLY REGULATED medium: an unbounded loop occupies\n"
+        "  airtime everyone else in radio range depends on, and may breach the duty\n"
+        "  cycle / occupancy limits your region imposes. YOU are responsible for\n"
+        "  what your node transmits.\n"
+        "\n"
+        "  To fix: unset MESHTASTIC_REQUIRE_MENTION (it defaults to ON, requiring\n"
+        "  messages to start with this node's name), or narrow the reply scope with\n"
+        "  MESHTASTIC_REPLY_CHANNELS to a private channel. Running anyway as\n"
+        "  configured.\n"
+        "  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+        scope,
+    )
+    return True
+
+
+def gb_identity(status: dict | None = None):
+    """Build a ``gateway_bridge.Identity`` (imported lazily, like the rest)."""
+    from meshtastic_hermes import gateway_bridge as gb
+
+    return gb.Identity.from_status(status)
+
+
 def _manager_status_connected(status) -> bool:
     """Return whether ConnectionManager.connect() produced a usable radio link."""
     return bool(isinstance(status, dict) and status.get("connected"))
@@ -188,6 +283,13 @@ if _HAVE_GATEWAY:
             # Before the first connect, name-based specs allow nothing (fail closed:
             # never guess an index for an unresolved name).
             self.allowed_channels = self._resolve_allowed_channels(None)
+            # Mention gating: on a CHANNEL, only reply when the text opens with this
+            # node's short name, long name or node id. DMs are exempt (already
+            # addressed to us). Defaults ON — see _require_mention_from_env.
+            self.require_mention = _require_mention_from_env()
+            # This node's own names, refreshed from the radio on every connect. Until
+            # then it is empty, and mention gating fails CLOSED on channel traffic.
+            self.identity = gb_identity()
             self._loop: asyncio.AbstractEventLoop | None = None
             self._mgr = None
 
@@ -208,6 +310,37 @@ if _HAVE_GATEWAY:
                     ", ".join(f"{name} -> {idx}" for name, idx in sorted(resolved.items())),
                 )
             return allowed
+
+        def _refresh_identity(self, status: dict | None) -> None:
+            """Update the identity mention gating matches against.
+
+            Names come from the radio's node DB, which can lag the connection by
+            seconds, so this runs on every connect. If nothing at all resolved we
+            say so loudly: gating then drops ALL channel traffic (fail closed) —
+            the bot goes quiet rather than answering everyone.
+            """
+            from meshtastic_hermes import gateway_bridge as gb
+
+            self.identity = gb.Identity.from_status(status)
+            if not self.require_mention:
+                return
+            if not self.identity:
+                logger.warning(
+                    "Meshtastic mention gating is ON but the radio reported NO "
+                    "identity (no node id, short name or long name). Channel "
+                    "messages will be IGNORED until identity is known — failing "
+                    "closed rather than replying to everyone. DMs are unaffected."
+                )
+            elif self.identity.is_degraded:
+                logger.warning(
+                    "Meshtastic mention gating is DEGRADED: the radio has not "
+                    "reported short_name/long_name yet (node_id=%s, short=%r, "
+                    "long=%r). Until it does, only the node id will be recognized "
+                    "as a mention, so messages addressed by name may be missed.",
+                    self.identity.node_id,
+                    self.identity.short_name,
+                    self.identity.long_name,
+                )
 
         @property
         def name(self) -> str:
@@ -276,6 +409,12 @@ if _HAVE_GATEWAY:
             self.allowed_channels = self._resolve_allowed_channels(channel_table)
             identity = self._mgr.local_node_identity()
             _persist_local_node_identity(identity)
+            self._refresh_identity(identity)
+            # Re-emitted on every connect AND reconnect: a config change only takes
+            # effect on a restart/reconnect, so this is where the operator sees it.
+            warn_if_reply_scope_is_unsafe(
+                self.allowed_channels, self.require_mention, log=logger
+            )
             if self._mgr.is_connected():
                 logger.info(
                     "Meshtastic adapter connected%s to %s (node %s, short=%s, long=%s, reply allowed_channels=%r)",
@@ -317,12 +456,25 @@ if _HAVE_GATEWAY:
                 if inbound is None:
                     return
                 decision = gb.should_reply(inbound, allowed_channels=self.allowed_channels)
+                reason = "skip (policy)"
+                if decision:
+                    # Second gate: on a channel the message must be ADDRESSED to us.
+                    # This also strips the mention, so the agent sees "weather now"
+                    # rather than "REDB weather now".
+                    gated = gb.apply_mention_gate(
+                        inbound, self.identity, require_mention=self.require_mention
+                    )
+                    if gated is None:
+                        decision = False
+                        reason = "skip (not addressed to us)"
+                    else:
+                        inbound = gated
                 logger.debug(
                     "inbound %s ch=%s from=%s -> %s text=%r",
                     "DM" if inbound["is_dm"] else "channel",
                     inbound["channel"],
                     inbound["from_id"],
-                    "REPLY" if decision else "skip (policy)",
+                    "REPLY" if decision else reason,
                     inbound["text"],
                 )
                 if not decision:
@@ -428,6 +580,11 @@ _SETUP_ENV_VARS = [
     (
         "MESHTASTIC_REPLY_CHANNELS",
         "Reply channel names, comma-separated e.g. 'in.secure' (blank = DMs only)",
+        False,
+    ),
+    (
+        "MESHTASTIC_REQUIRE_MENTION",
+        "Require channel messages to start with this node's name? (true/false, default true)",
         False,
     ),
     (
@@ -538,9 +695,11 @@ def register(ctx):
     host = os.getenv("MESHTASTIC_HOST")
     if host:
         logger.info(
-            "meshtastic-platform registered (MESHTASTIC_HOST=%s, reply allowed_channels=%r)",
+            "meshtastic-platform registered (MESHTASTIC_HOST=%s, reply allowed_channels=%r, "
+            "require_mention=%s)",
             host,
             _allowed_channels_from_env(),
+            _require_mention_from_env(),
         )
     else:
         logger.warning(

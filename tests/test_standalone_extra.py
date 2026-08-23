@@ -389,7 +389,17 @@ def test_observe_stops_early_on_keyboard_interrupt(ctx, fake_radio, monkeypatch,
 
 
 def _bridge_args(**kw):
-    base = {"host": "1.2.3.4", "seconds": 1, "send": False, "all": False, "channels": None}
+    # Stands in for the argparse namespace `bridge` builds. `no_mention=True`
+    # keeps these pre-existing cases exercising the reply-to-everything behavior
+    # they were written for; mention gating gets its own tests below.
+    base = {
+        "host": "1.2.3.4",
+        "seconds": 1,
+        "send": False,
+        "all": False,
+        "channels": None,
+        "no_mention": True,
+    }
     base.update(kw)
     return types.SimpleNamespace(**base)
 

@@ -339,7 +339,9 @@ def test_interactive_setup_saves_a_new_host_and_reports_it(monkeypatch, capsys):
     monkeypatch.setitem(sys.modules, "hermes_cli", types.ModuleType("hermes_cli"))
     monkeypatch.setitem(sys.modules, "hermes_cli.config", fake_config)
 
-    answers = iter(["10.2.2.60", "", "", ""])
+    # One answer per prompt: the host, then blank (skip) for every optional var.
+    # Derived from _SETUP_ENV_VARS so adding an optional var doesn't break this.
+    answers = iter(["10.2.2.60"] + [""] * (len(adapter._SETUP_ENV_VARS) - 1))
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
 
     adapter.interactive_setup()
