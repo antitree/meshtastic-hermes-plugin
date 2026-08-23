@@ -16,10 +16,13 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from tests.test_adapter_runtime import (  # noqa: F401 - adapter_mod is a fixture
+# `tests/` is not a package (no __init__.py), so import the sibling module by its
+# bare name — pytest puts the test directory on sys.path under rootdir insertion.
+from test_adapter_runtime import (  # noqa: F401 - adapter_mod is imported as a fixture
     _FakeManager,
     _make,
     _patch_manager,
+    _text_packet,
     adapter_mod,
 )
 
@@ -137,8 +140,6 @@ def test_mixed_names_and_indices_at_the_adapter(adapter_mod, monkeypatch):  # no
 def test_named_channel_drives_inbound_dispatch(adapter_mod, monkeypatch):  # noqa: F811
     """The resolved index really gates inbound traffic, and traffic on the slot the
     name does NOT occupy is ignored."""
-    from tests.test_adapter_runtime import _text_packet
-
     monkeypatch.setenv("MESHTASTIC_REPLY_CHANNELS", "in.secure")
     mgr = _FakeManager(channels=[PRIMARY, _ch(1, "public.chat"), _ch(2, "in.secure")])
     _patch_manager(monkeypatch, mgr)
