@@ -355,7 +355,10 @@ def test_e2e_list_nodes_reads_the_radio_node_db(radio):
 def test_e2e_status_reports_the_live_link(radio):
     assert connection.get_manager().status() == {
         "connected": True,
+        "state": "connected",
         "host": "radio.test",
+        "consecutive_failures": 0,
+        "slow_retry": False,
         "node_id": MY_ID,
         "true_node_id": MY_ID,
         "node_num": int(MY_ID[1:], 16),

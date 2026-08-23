@@ -67,13 +67,30 @@ def _on_session_end(session_id=None, **kwargs):
 # ----------------------------------------------------------------------
 
 
+def _render_connection(status: dict) -> str:
+    """Human-readable one-liner for a status dict, honoring the three states.
+
+    Falls back to the legacy boolean when ``state`` is absent (e.g. a status record
+    written by an older gateway build).
+    """
+    host = status.get("host")
+    state = status.get("state")
+    if state is None:
+        state = "connected" if status.get("connected") else "disconnected"
+    if state == "connected":
+        return f"connected to {host}"
+    if state == "connecting":
+        return f"connecting to {host}… (retrying; a booting node refusing TCP is normal)"
+    return "disconnected"
+
+
 def _handle_slash(raw_args: str) -> str:
     if raw_args.strip() == "help":
         return "Usage: /meshtastic — show connection status and knowledge-base summary."
     status = get_manager().status()
     kb = get_observer().kb.summary()
     lines = [
-        f"Connection: {'connected to ' + str(status['host']) if status['connected'] else 'disconnected'}",
+        f"Connection: {_render_connection(status)}",
         f"Local node: {status['node_id'] or 'unknown'}",
         f"KB: {kb['nodes']} nodes, {kb['packets']} packets "
         f"({kb['encrypted_packets']} encrypted), {kb['channels_seen']} channels",
@@ -84,6 +101,15 @@ def _handle_slash(raw_args: str) -> str:
 # ----------------------------------------------------------------------
 # Status helpers
 # ----------------------------------------------------------------------
+
+
+def _normalize_platform_state(state) -> str:
+    """Map a Hermes platform state onto our three connection states."""
+    if state == "connected":
+        return "connected"
+    if state in {"connecting", "reconnecting", "starting", "initializing"}:
+        return "connecting"
+    return "disconnected"
 
 
 def _local_status() -> dict:
@@ -114,6 +140,10 @@ def _gateway_runtime_status() -> dict | None:
     state = platform.get("state")
     return {
         "connected": state == "connected",
+        # Normalize Hermes' own platform state onto our three states. Hermes uses
+        # richer platform states ("connecting", "reconnecting", "error", ...); anything
+        # that is still actively coming up maps to `connecting`.
+        "state": _normalize_platform_state(state),
         "host": os.environ.get("MESHTASTIC_HOST"),
         "node_id": platform.get("node_id"),
         "true_node_id": platform.get("true_node_id") or platform.get("node_id"),

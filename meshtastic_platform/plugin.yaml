@@ -65,3 +65,18 @@ optional_env:
     description: "Allow any node on the mesh to talk to the agent (1/true). Use with care on public channels."
     prompt: "Allow all users? (true/false)"
     password: false
+  - name: MESHTASTIC_FAILURE_THRESHOLD
+    description: >-
+      Consecutive failed connect attempts before the connection status reports
+      'disconnected' instead of 'connecting'. Below the threshold a failure is treated
+      as soft (a node that is still booting refuses TCP — that is expected, not an
+      error). A single success resets the counter. Default: 10.
+    prompt: "Consecutive failures before reporting disconnected (default 10)"
+    password: false
+  - name: MESHTASTIC_SLOW_RETRY_SECONDS
+    description: >-
+      Retry interval in seconds once the failure threshold is exceeded. Retrying never
+      stops — it just slows down, so the link still self-heals when the radio comes
+      back, while the status honestly reports 'disconnected'. Default: 300 (5 minutes).
+    prompt: "Slow retry interval in seconds (default 300)"
+    password: false

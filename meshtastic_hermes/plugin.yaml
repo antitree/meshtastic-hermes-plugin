@@ -42,3 +42,9 @@ optional_env:
   - name: MESHTASTIC_HERMES_DB
     description: "Path to the SQLite knowledge-base file. Defaults to $HERMES_HOME/meshtastic_kb.sqlite. Optional."
     secret: false
+  - name: MESHTASTIC_FAILURE_THRESHOLD
+    description: "Consecutive failed connect attempts before status reports 'disconnected' instead of 'connecting'. Default: 10."
+    secret: false
+  - name: MESHTASTIC_SLOW_RETRY_SECONDS
+    description: "Retry interval (seconds) once the failure threshold is exceeded. Retrying never stops, it just slows down. Default: 300."
+    secret: false

@@ -509,6 +509,64 @@ hermes meshtastic status       # connection status as JSON
 hermes meshtastic kb-summary   # KB summary as JSON
 ```
 
+### Connection state: `connected`, `connecting`, `disconnected`
+
+`hermes meshtastic status` (and `/meshtastic`) reports a **three-valued** `state`, not
+just a boolean. A bare "not connected" could not tell a node that is still booting apart
+from a configuration that will never work — which is exactly the trap that sends people
+debugging the wrong thing.
+
+| `state` | What it means |
+|---|---|
+| `connected` | A live, working link. This is the only state in which you can send. |
+| `connecting` | We are still actively trying, at full retry rate. The node may simply be booting, rebooting, or briefly off the network. **Not an error.** |
+| `disconnected` | We are not usefully trying any more: you ran `meshtastic_disconnect`, we never tried, the `meshtastic` package is missing, or `MESHTASTIC_FAILURE_THRESHOLD` consecutive attempts failed and the supervisor has dropped to a slow retry. |
+
+**`Connection refused` while `connecting` is expected, not a fault.** A Meshtastic node
+that is booting (or that has just been power-cycled) refuses TCP on port `4403` for a
+while before its network stack is up. The supervisor keeps retrying; nothing is wrong.
+
+After `MESHTASTIC_FAILURE_THRESHOLD` consecutive failures the state becomes
+`disconnected` — honest, because the link is not working — but **retrying does not
+stop**. It backs off to `MESHTASTIC_SLOW_RETRY_SECONDS`, so the link still self-heals
+unattended when the radio comes back. The transition is logged clearly:
+
+```
+WARNING meshtastic_hermes.connection: Meshtastic connect to 192.168.55.73 failed 10
+consecutive times (threshold 10) — reporting state=disconnected and backing off to a
+slow retry every 300s. Retrying continues in the background so the node can still
+self-heal.
+```
+
+A single successful connect resets the counter and returns the cadence to normal.
+
+Example JSON:
+
+```json
+{
+  "connected": false,
+  "state": "connecting",
+  "host": "192.168.55.73",
+  "consecutive_failures": 3,
+  "slow_retry": false,
+  "node_id": null
+}
+```
+
+The boolean `connected` key is **kept for backwards compatibility** and is `true` only
+when `state == "connected"`. While `connecting` there is no usable interface, so
+`connected` stays `false` — anything that gates sending on it keeps behaving correctly.
+Read `state` when you want to tell "still coming up" from "gave up".
+
+Tuning:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `MESHTASTIC_FAILURE_THRESHOLD` | `10` | Consecutive failed connect attempts before `connecting` becomes `disconnected`. A single success resets the counter. |
+| `MESHTASTIC_SLOW_RETRY_SECONDS` | `300` | Retry interval, in seconds, once the threshold is exceeded. Retrying never stops — it only slows down. |
+
+Both fall back to the default if unset, non-numeric, or not greater than zero.
+
 ## Troubleshooting
 
 - **Plugin not listed** — run `just hermes-debug` (`HERMES_PLUGINS_DEBUG=1 hermes plugins
@@ -518,7 +576,11 @@ list`) for verbose discovery logs; ensure it's enabled — `plugins.enabled` in
   Hermes' Python environment (happens with bare directory-drop installs). Install it there:
   `pip install meshtastic` (pip-based installs of this package pull it automatically).
 - **Connect fails** — verify the node IP and that TCP port `4403` is reachable
-  (`nc -z <host> 4403`).
+  (`nc -z <host> 4403`). First check the reported `state`: while it says `connecting`,
+  a `Connection refused` in the log is *expected* (the node is probably still booting)
+  and the supervisor is retrying — there is nothing to fix. Only `disconnected` means we
+  have given up on the fast retry (see
+  [Connection state](#connection-state-connected-connecting-disconnected)).
 - **`hermes setup` says "Set these env vars in ~/.hermes/.env: MESHTASTIC_HOST" even
   though it IS set** — and the gateway log on the same run says
   `meshtastic-platform registered (MESHTASTIC_HOST=10.2.2.60, ...)`. That banner is not

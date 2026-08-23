@@ -119,7 +119,10 @@ def test_connect_honors_an_explicit_port(monkeypatch):
 
 
 def test_disconnect_returns_json():
-    assert _data(tools.disconnect({})) == {"connected": False}
+    assert _data(tools.disconnect({})) == {
+        "connected": False,
+        "state": "disconnected",
+    }
 
 
 # ----------------------------------------------------------------------
