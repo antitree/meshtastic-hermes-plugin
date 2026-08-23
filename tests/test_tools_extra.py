@@ -29,9 +29,27 @@ class _FakeIface:
 def iface():
     """Inject a fake interface into the process-wide manager."""
     mgr = connection.get_manager()
-    fake = _FakeIface()
+    fake = _FakeIface(
+        # index 0 = unnamed PRIMARY (public), index 1 = "in.secure". The tool-send
+        # policy resolves channel names against this table.
+        channels=[
+            types.SimpleNamespace(role=1, settings=types.SimpleNamespace(name="")),
+            types.SimpleNamespace(role=2, settings=types.SimpleNamespace(name="in.secure")),
+        ]
+    )
     mgr._iface = fake
     return fake
+
+
+@pytest.fixture
+def tool_send_allowed(monkeypatch):
+    """Grant the tool permission to broadcast on "in.secure" (remediation item 1).
+
+    Tool broadcasts are refused by default; tests below that are about SEND
+    MECHANICS rather than policy opt in explicitly.
+    """
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
 
 
 def _data(raw):
@@ -52,7 +70,14 @@ def test_handlers_return_json_error_when_disconnected():
         tools.list_channels,
         tools.device_metrics,
     ):
-        payload = {"text": "hi"} if handler is tools.send_text else {}
+        # send_text gets a payload that PASSES tool-send policy (a PKI DM), so it
+        # reaches the connection check — the point of this test — rather than being
+        # turned back earlier by the policy gate.
+        payload = (
+            {"text": "hi", "dest_id": "!11112222", "pki": True}
+            if handler is tools.send_text
+            else {}
+        )
         data = _data(handler(payload))
         assert "error" in data, handler.__name__
         assert "Not connected" in data["error"]
@@ -144,20 +169,22 @@ def test_send_text_rejects_pki_broadcast():
     assert "pki=true requires dest_id" in data["error"]
 
 
-def test_send_text_broadcast_does_not_wait_for_an_ack(iface):
-    data = _data(tools.send_text({"text": "hello"}))
+def test_send_text_broadcast_does_not_wait_for_an_ack(iface, tool_send_allowed):
+    data = _data(tools.send_text({"text": "hello", "channel_name": "in.secure"}))
     assert data["sent"] is True
     assert data["ack"] is None  # a broadcast has no single recipient to ack
     assert data["encryption"] == "channel"
     payload, kw = iface.sent[0]
     assert payload == b"hello"
-    assert kw["channelIndex"] == 0
+    assert kw["channelIndex"] == 1
     assert "destinationId" not in kw
 
 
 def test_send_text_ack_timeout_reports_no_ack(iface):
     data = _data(
-        tools.send_text({"text": "hi", "dest_id": "!11112222", "ack_timeout": 0.01})
+        tools.send_text(
+            {"text": "hi", "dest_id": "!11112222", "pki": True, "ack_timeout": 0.01}
+        )
     )
     assert data["ack"]["status"] == "no_ack"
     assert data["ack"]["reason"] == "TIMEOUT"
@@ -171,7 +198,7 @@ def test_send_text_captures_a_delivery_ack(iface):
         )
 
     iface.sendData = send_and_ack
-    data = _data(tools.send_text({"text": "hi", "dest_id": "!11112222"}))
+    data = _data(tools.send_text({"text": "hi", "dest_id": "!11112222", "pki": True}))
     assert data["ack"] == {"status": "delivered", "reason": "NONE", "from": "!11112222"}
 
 
@@ -183,7 +210,7 @@ def test_send_text_reports_a_nak(iface):
         )
 
     iface.sendData = send_and_nak
-    data = _data(tools.send_text({"text": "hi", "dest_id": "!11112222"}))
+    data = _data(tools.send_text({"text": "hi", "dest_id": "!11112222", "pki": True}))
     assert data["ack"]["status"] == "failed"
     assert data["ack"]["reason"] == "NO_RESPONSE"
 
@@ -202,7 +229,9 @@ def test_send_text_pki_dm_sets_the_encryption_flag(iface):
 
 def test_send_text_want_ack_false_skips_the_ack_path(iface):
     data = _data(
-        tools.send_text({"text": "hi", "dest_id": "!11112222", "want_ack": False})
+        tools.send_text(
+            {"text": "hi", "dest_id": "!11112222", "pki": True, "want_ack": False}
+        )
     )
     assert data["ack"] is None
     _, kw = iface.sent[0]

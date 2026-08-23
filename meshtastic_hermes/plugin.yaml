@@ -45,6 +45,22 @@ optional_env:
   - name: MESHTASTIC_ALLOWED_HOSTS
     description: "Optional comma-separated allowlist of hostnames, IPs, or CIDR ranges (e.g. 192.0.2.0/24,your-host.example.com) applied when MESHTASTIC_ALLOW_DYNAMIC_HOSTS is on. Unset means any host is allowed once dynamic hosts are enabled."
     secret: false
+  # Tool-send transmit policy for meshtastic_send_text. Configured SEPARATELY from
+  # the gateway's automatic-reply policy (MESHTASTIC_REPLY_CHANNELS et al) because
+  # they are different permissions: a reply is a bounded response to a message that
+  # already passed the channel/mention/sender gates, while a tool send is originated
+  # by the model, which picks the text, the channel, and the moment with none of
+  # those gates in the path. Reply configuration therefore never authorizes a tool
+  # send. Default: PKI direct messages only.
+  - name: MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST
+    description: "Set to true to let meshtastic_send_text originate channel broadcasts at all. Default: false (the tool sends PKI direct messages only). Only an explicit truthy value (1/true/yes/on) enables it, so a typo fails closed."
+    secret: false
+  - name: MESHTASTIC_TOOL_SEND_CHANNELS
+    description: "Comma-separated channel NAMES meshtastic_send_text may transmit on, e.g. 'in.secure' or 'in.secure,ops'. Same grammar and resolution as MESHTASTIC_REPLY_CHANNELS, but a separate setting: names are resolved against the radio's channel table on every send, numeric indices are legacy and warn (an index is a SLOT, not a channel identity), and 'all' means every channel. Unset means no channel broadcast is allowed."
+    secret: false
+  - name: MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY
+    description: "Set to true to allow meshtastic_send_text on the PRIMARY channel, whose pre-shared key is public on a default radio. Required IN ADDITION to MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST and a matching MESHTASTIC_TOOL_SEND_CHANNELS entry. Default: false."
+    secret: false
   - name: MESHTASTIC_HERMES_DB
     description: "Path to the SQLite knowledge-base file. Defaults to $HERMES_HOME/meshtastic_kb.sqlite. Optional."
     secret: false

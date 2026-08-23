@@ -493,6 +493,69 @@ already up.
 All other tools require an active connection except the `meshtastic_kb_*` tools, which
 read the persistent knowledge base and work offline.
 
+## Sending explicitly (and why the tool cannot broadcast by default)
+
+`meshtastic_send_text` is a tool the **model** calls, and LoRa is shared, regulated
+spectrum. Left open, a single tool call — including one the model was talked into by
+text it read off the mesh — could broadcast anything to every radio in range. So tool
+sends have their own transmit policy, enforced **before** anything reaches the radio: a
+refused send returns `{"error": ..., "code": ...}` and transmits nothing at all.
+
+**By default the tool can only send PKI direct messages.** A DM with `pki=true` is
+end-to-end encrypted to one node. Everything else — plain DMs and channel broadcasts —
+is refused until the operator opts in.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST` | `false` | Set to `true`/`1`/`yes`/`on` to let the tool originate channel broadcasts at all. Anything else — including a typo — leaves broadcasts **off**. |
+| `MESHTASTIC_TOOL_SEND_CHANNELS` | _unset_ | Comma-separated channel **names** the tool may transmit on, e.g. `in.secure` or `in.secure,ops`. Same grammar and resolution as `MESHTASTIC_REPLY_CHANNELS`: names are matched against the radio's channel table on every send, numeric indices are legacy and warn, and `all` means every channel. Unset means no channel is allowed. |
+| `MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY` | `false` | Required *in addition* to the two above before the tool may send on the **Primary** channel, whose PSK is public on a default radio. |
+
+### This is configured separately from replies — on purpose
+
+`MESHTASTIC_REPLY_CHANNELS` does **not** authorize tool sends, and there is no
+setting that makes it do so. The two permissions are genuinely different in size:
+
+- A **reply** is reactive and bounded. Something arrived on an allowlisted channel,
+  from an allowlisted sender, addressed to this node (the [three gates](#the-three-gates)),
+  and the answer goes back to that same conversation.
+- A **tool send** is originated. The model chooses the text, the channel, and the
+  moment, with none of those three gates in the path.
+
+Saying "you may answer people who speak to you on `in.secure`" is not the same as
+saying "you may transmit on `in.secure` whenever you decide to", so the plugin makes
+you say the second one separately.
+
+### There is no default channel
+
+A broadcast must name its channel — pass `channel_name` (preferred) or
+`channel_index`. Omitting both is an error (`"code": "channel_required"`), **not** a
+fallback to channel `0`. It used to be exactly that fallback, which meant a model that
+simply forgot the argument broadcast in the clear on the public Primary channel.
+
+Prefer `channel_name`. As with the reply allowlist, [an index is a radio *slot*, not a
+channel identity](#use-channel-names-not-indices) — reorder your channels and index `1`
+now points somewhere else, while the name follows the channel.
+
+A worked config allowing the agent to broadcast on one private channel:
+
+```sh
+MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST=true
+MESHTASTIC_TOOL_SEND_CHANNELS=in.secure    # names, resolved against the radio
+# Primary stays refused: MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY is not set
+```
+
+```json
+{
+  "name": "meshtastic_send_text",
+  "arguments": { "text": "hello", "channel_name": "in.secure" }
+}
+```
+
+Error codes you may see: `broadcast_disabled`, `channel_required`,
+`no_allowed_channels`, `channel_not_allowed`, `primary_not_allowed`,
+`unknown_channel`, `dm_requires_pki`, `pki_requires_dest`, `invalid_channel`.
+
 ## The knowledge base
 
 Every packet observed while connected is recorded as metadata (never content). Over time

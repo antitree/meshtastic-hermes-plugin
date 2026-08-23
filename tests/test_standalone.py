@@ -69,8 +69,11 @@ def test_repl_send_friendly_parsing():
     ctx = build_registry()
     assert "usage: send" in repl_command(ctx, "send")
     assert "integer index" in repl_command(ctx, "send notanint hi")
-    # channel + multi-word text parses; tool runs (errors only because offline).
-    assert "Not connected" in repl_command(ctx, "send 1 hello pommeraie")
+    # channel + multi-word text parses and reaches the tool handler. Offline and
+    # with no tool-send policy configured, the handler's transmit policy is what
+    # turns it back (remediation item 1) — proof the args got that far.
+    out = json.loads(repl_command(ctx, "send 1 hello pommeraie"))
+    assert out["code"] == "broadcast_disabled"
 
 
 def test_repl_kb_friendly_verb_offline():
