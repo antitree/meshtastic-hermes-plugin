@@ -344,7 +344,7 @@ def register(ctx):
         check_fn=check_requirements,
         validate_config=validate_config,
         required_env=["MESHTASTIC_HOST"],
-        install_hint="pip install meshtastic-hermes-plugin (bundles the meshtastic radio stack)",
+        install_hint="Install meshtastic-hermes-plugin with pip (bundles the meshtastic radio stack)",
         env_enablement_fn=_env_enablement,
         cron_deliver_env_var="MESHTASTIC_HOST",
         # User authorization (the gateway gates who may talk to the agent). Without

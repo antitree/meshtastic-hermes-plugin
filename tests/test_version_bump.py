@@ -41,15 +41,33 @@ from bump_version import (
 )
 
 
+# The version the `tree` fixture is normalised to. The fixture copies the real
+# repo's files for their shape and formatting, but the assertions below are
+# written against a fixed version, so the copy is rewritten to this value. Do
+# NOT use the repo's live version here: the patch-bump workflow moves it on
+# every merge, and these tests would then fail on an unrelated release.
+FIXTURE_VERSION = "0.1.0"
+
+
 @pytest.fixture
 def tree(tmp_path: pathlib.Path) -> pathlib.Path:
-    """A temp copy of just the files the bump script touches."""
+    """A temp copy of just the files the bump script touches, pinned to FIXTURE_VERSION."""
     for spec in VERSION_FILES:
         source = REPO / spec.path
         dest = tmp_path / spec.path
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(source, dest)
-    shutil.copy(REPO / "CHANGELOG.md", tmp_path / "CHANGELOG.md")
+    # Normalise the copy so the tests do not depend on the repo's live version:
+    # drop any changelog section released after FIXTURE_VERSION, so the newest
+    # entry is FIXTURE_VERSION's, then rewrite the version declarations.
+    changelog = (REPO / "CHANGELOG.md").read_text()
+    marker = f"## [{FIXTURE_VERSION}]"
+    if marker in changelog:
+        head, _, rest = changelog.partition(marker)
+        header, _, _ = head.partition("## [")
+        changelog = header + marker + rest
+    (tmp_path / "CHANGELOG.md").write_text(changelog)
+    write_versions(FIXTURE_VERSION, tmp_path)
     return tmp_path
 
 

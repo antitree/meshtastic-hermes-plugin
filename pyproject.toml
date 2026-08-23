@@ -12,9 +12,9 @@ license = { text = "MIT" }
 authors = [{ name = "Thomas Pham" }]
 keywords = ["meshtastic", "hermes", "hermes-agent", "lora", "mesh", "plugin"]
 
-# `meshtastic` is a hard dependency so any pip-based install (pip install .,
-# pip install meshtastic-hermes-plugin, or `hermes plugins install` when it pip-
-# installs the package) pulls it automatically into Hermes' Python environment.
+# `meshtastic` is a hard dependency so any pip-based install of this package
+# (a local checkout, the published distribution, or `hermes plugins install`
+# when it uses pip) pulls it automatically into Hermes' Python environment.
 # Tool handlers still import-guard it so a bare directory-drop (no pip step) loads
 # and degrades gracefully instead of crashing.
 dependencies = [

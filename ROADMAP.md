@@ -85,6 +85,19 @@ correctly document today's behavior rather than the desired behavior.
 - **No mention gating.** There is no concept of addressing the bot by name, so
   channel replies are all-or-nothing per channel.
 
+## Security scanner
+
+- **Clear the docs findings that block plugin installation** —
+  [#4](https://github.com/antitree/meshtastic-hermes-plugin/issues/4). Hermes'
+  `scan_on_install` rates this repo `DANGEROUS`, which blocks
+  `hermes plugins install` (`--force` does not override). The blockers are two
+  CRITICAL `hermes_config_mod` hits in `README.md:122` and `docs/usage.md:349`
+  — both the documented install procedure — plus three HIGH findings in
+  `docs/usage.md`. Deferred to interactive human work because each fix trades
+  documentation clarity against a regex. Fixing the code findings does **not**
+  change the verdict; see `docs/security-scanner.md` for the analysis and the
+  counterfactual. When the CRITICALs clear, tighten the `security-scan` job's
+  `--max-verdict` from `dangerous` to `caution`, then to `safe`.
 ## Release automation — what is NOT verified until the first real run
 
 `scripts/bump_version.py` is unit-tested (`tests/test_version_bump.py`) and the
