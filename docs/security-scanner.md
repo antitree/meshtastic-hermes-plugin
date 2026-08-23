@@ -1,5 +1,14 @@
 # The Hermes plugin security scanner
 
+> **Status: reference only — nothing gates on this.**
+>
+> We do not track the scanner's verdict and CI does not run it. The scanner is
+> regex matching over raw file text, so it flags Markdown table headers, the
+> word `sudo`, and the documented install procedure. Satisfying it meant
+> changing byte sequences rather than behavior. The analysis below is retained
+> because it is accurate and took real work to establish; treat it as a study
+> of the tool, not a to-do list. See ROADMAP.md.
+
 Research writeup: what `scan_on_install` actually runs, whether it can be run
 standalone or in CI, and what each finding against this repository means.
 
