@@ -74,20 +74,13 @@ error branches to hit a number, which is the opposite of the intent.
 Carried over from the handoff; these are missing *features*, and the tests
 correctly document today's behavior rather than the desired behavior.
 
-- **Airtime safety layer: not planned.** Dropped by decision on 2026-08-23.
-  There is deliberately no rate limit, no cooldown, and no bot-to-bot loop
-  detection. The only loop guard in the transmit path is
-  `from_id == my_node_id`, which does not catch a *different* bot.
-
-  What stands in its place, by design rather than as a stopgap: replies are off
-  on every channel by default (silence on Primary is pinned by
-  `tests/test_e2e.py::test_e2e_bridge_stays_silent_on_a_public_channel`), and
-  mention gating requires a channel message to be addressed to this node.
-  Neither bounds how *often* the node transmits — they bound *which* messages
-  are answered. An operator who disables mention gating on a broad reply scope
-  gets a loud warning at every connect and is on their own.
-
-  Do not re-propose this without the operator asking for it.
+- **Transmit rate limiting: in progress.** Tracked as item 3 of
+  `docs/security-remediation.md`. A shared process-wide limiter covering every
+  outbound path (tool sends, adapter replies, bridge `--send`), with per-global,
+  per-DM and per-channel buckets and a reply cooldown. This supersedes the
+  earlier decision not to build an airtime layer: the security remediation plan
+  requires it as a loop breaker, and it must cover manual tool sends, which the
+  earlier framing did not.
 - **Mention gating.** `MESHTASTIC_REQUIRE_MENTION` (on by default) requires a
   channel message to start with this node's short name, long name, or node id.
   DMs are always answered. This is a gate on which messages are answered, not a
