@@ -92,19 +92,43 @@ def _split_text(text: str, max_bytes: int = _MAX_MESH_BYTES) -> list[str]:
     return out
 
 
-def _allowed_channels_from_env():
-    """Resolve the channel reply-allowlist from env.
+def _channel_spec_from_env():
+    """Parse the channel reply-allowlist from env into an UNRESOLVED spec.
 
-    MESHTASTIC_REPLY_ALL=true   -> every channel.
-    MESHTASTIC_REPLY_CHANNELS="1,2" -> DMs + those channel indices (your private
-                                       channels; public Primary/0 excluded by default).
-    Neither                     -> DMs only.
+    MESHTASTIC_REPLY_ALL=true            -> every channel.
+    MESHTASTIC_REPLY_CHANNELS="in.secure" -> DMs + the channel with that NAME.
+    MESHTASTIC_REPLY_CHANNELS="1,2"      -> DMs + those channel indices (legacy).
+    Neither                              -> DMs only.
+
+    Names cannot be turned into channel indices without the radio's channel table,
+    so this stays pure and the adapter resolves it in ``connect()`` — every time,
+    so a rename or reorder on the radio is picked up rather than cached forever.
     """
     from meshtastic_hermes import gateway_bridge as gb
 
     if os.getenv("MESHTASTIC_REPLY_ALL", "").lower() in {"1", "true", "yes"}:
         return gb.ALL_CHANNELS
-    return gb.parse_channel_spec(os.getenv("MESHTASTIC_REPLY_CHANNELS"))
+    spec = gb.parse_channel_spec(os.getenv("MESHTASTIC_REPLY_CHANNELS"))
+    if isinstance(spec, gb.ChannelSpec) and spec.indices:
+        logger.warning(
+            "MESHTASTIC_REPLY_CHANNELS uses numeric channel index/indices %s. Indices "
+            "are radio SLOTS, not channel identities — editing or reordering channels "
+            "silently repoints them, which can transmit replies on the wrong (possibly "
+            "public) channel. Configure channel NAMES instead, e.g. "
+            "MESHTASTIC_REPLY_CHANNELS=\"in.secure\" (see meshtastic_list_channels).",
+            sorted(spec.indices),
+        )
+    return spec
+
+
+def _allowed_channels_from_env():
+    """Back-compat helper: the parsed spec, resolved against nothing.
+
+    Retained because ``register()`` logs the configured policy before any radio
+    connection exists. Names show up here unresolved (that is the point — there is
+    no channel table yet); the adapter resolves them in ``connect()``.
+    """
+    return _channel_spec_from_env()
 
 
 def _manager_status_connected(status) -> bool:
@@ -157,9 +181,33 @@ if _HAVE_GATEWAY:
             super().__init__(config=config, platform=Platform("meshtastic"))
             extra = getattr(config, "extra", {}) or {}
             self.host = os.getenv("MESHTASTIC_HOST") or extra.get("host", "")
-            self.allowed_channels = _allowed_channels_from_env()
+            # The *configured* allowlist (names and/or legacy indices), parsed once.
+            self.channel_spec = _channel_spec_from_env()
+            # The allowlist actually enforced on inbound traffic: indices, re-resolved
+            # from channel NAMES against the radio's channel table on every connect.
+            # Before the first connect, name-based specs allow nothing (fail closed:
+            # never guess an index for an unresolved name).
+            self.allowed_channels = self._resolve_allowed_channels(None)
             self._loop: asyncio.AbstractEventLoop | None = None
             self._mgr = None
+
+        def _resolve_allowed_channels(self, channel_table):
+            """Turn ``self.channel_spec`` into enforceable channel indices.
+
+            Called on every connect so a channel rename/reorder on the radio moves
+            the allowlist with the NAME instead of leaving a stale index behind.
+            """
+            from meshtastic_hermes import gateway_bridge as gb
+
+            allowed, resolved = gb.resolve_channel_spec(
+                self.channel_spec, channel_table, log=logger
+            )
+            if resolved:
+                logger.info(
+                    "Meshtastic reply channels resolved: %s",
+                    ", ".join(f"{name} -> {idx}" for name, idx in sorted(resolved.items())),
+                )
+            return allowed
 
         @property
         def name(self) -> str:
@@ -211,6 +259,21 @@ if _HAVE_GATEWAY:
 
             pub.subscribe(self._on_rx, "meshtastic.receive")
             self._mark_connected()
+            # Re-resolve channel NAMES -> indices against the table this link
+            # reports. Doing it on every connect (cold boot AND reconnect) is what
+            # makes a rename/reorder on the radio move the allowlist with the name.
+            channel_table = []
+            try:
+                channel_table = await self._loop.run_in_executor(
+                    None, self._mgr.channel_table
+                )
+            except Exception:
+                logger.warning(
+                    "Could not read the Meshtastic channel table; reply channel names "
+                    "stay unresolved for now",
+                    exc_info=True,
+                )
+            self.allowed_channels = self._resolve_allowed_channels(channel_table)
             identity = self._mgr.local_node_identity()
             _persist_local_node_identity(identity)
             if self._mgr.is_connected():
@@ -364,7 +427,7 @@ _SETUP_ENV_VARS = [
     ("MESHTASTIC_HOST", "Meshtastic node host/IP (TCP, e.g. 192.168.1.50)", True),
     (
         "MESHTASTIC_REPLY_CHANNELS",
-        "Reply channel indices, comma-separated (blank = DMs only)",
+        "Reply channel names, comma-separated e.g. 'in.secure' (blank = DMs only)",
         False,
     ),
     (

@@ -75,7 +75,7 @@ wins and the other reuses it (no churn).
     environment = {
       MESHTASTIC_HOST = "192.168.55.73";      # node to connect to (TCP)
       # Gateway reply policy (meshtastic-platform):
-      MESHTASTIC_REPLY_CHANNELS = "1";        # reply to DMs + channel 1 (your private channel)
+      MESHTASTIC_REPLY_CHANNELS = "in.secure"; # reply to DMs + the channel NAMED in.secure
       # MESHTASTIC_REPLY_ALL = "true";        # …or reply on every channel incl. public Primary
       # MESHTASTIC_HERMES_DB = "/var/lib/hermes/meshtastic_kb.sqlite";  # KB path override
     };
@@ -110,11 +110,69 @@ needed. Someone messages your node and the agent answers:
 
 **Reply policy** (env on the service):
 
-| Env                                        | Effect                                                                         |
-| ------------------------------------------ | ------------------------------------------------------------------------------ |
-| _unset_                                    | DMs only (default) — safest, no channel noise                                  |
-| `MESHTASTIC_REPLY_CHANNELS="1"` or `"1,2"` | DMs + those channel indices (your private channels; public Primary/0 excluded) |
-| `MESHTASTIC_REPLY_ALL="true"`              | DMs + every channel (incl. public Primary — use with care)                     |
+| Env                                                     | Effect                                                                            |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| _unset_                                                 | DMs only (default) — safest, no channel noise                                     |
+| `MESHTASTIC_REPLY_CHANNELS="in.secure"` **(recommended)** | DMs + the channel **named** `in.secure`                                           |
+| `MESHTASTIC_REPLY_CHANNELS="in.secure,ops"`             | DMs + both named channels (comma-separated)                                       |
+| `MESHTASTIC_REPLY_CHANNELS="1"` or `"1,2"`              | **Legacy.** DMs + those channel *indices*. Still works, but see the warning below |
+| `MESHTASTIC_REPLY_ALL="true"`                           | DMs + every channel (incl. public Primary — use with care)                        |
+
+#### Use channel names, not indices
+
+> **Why this matters.** A channel index is a **slot on the radio, not a channel
+> identity.** If you reorder or edit channels on the node, index `2` starts pointing
+> at a *different* channel — and the bot keeps transmitting replies there. On a shared,
+> legally regulated RF medium that means a reply meant for your private channel can go
+> out on a public one. Configure **names**; they follow the channel.
+
+Concrete example. Your node has:
+
+```
+0  <unnamed primary>   PRIMARY     (public)
+1  public.chat         SECONDARY
+2  in.secure           SECONDARY   (private)
+```
+
+Set:
+
+```sh
+MESHTASTIC_REPLY_CHANNELS="in.secure"
+```
+
+At connect the adapter resolves the name against the radio's live channel table and logs
+what it resolved to:
+
+```
+INFO  meshtastic_platform.adapter: Meshtastic reply channels resolved: in.secure -> 2
+```
+
+Later you delete `public.chat`, and `in.secure` slides up to index `1`. Nothing to change
+— the adapter **re-resolves the name on every connect**, so on the next (re)connect it logs
+`in.secure -> 1` and keeps replying on the right channel. An index-based config
+(`MESHTASTIC_REPLY_CHANNELS="2"`) would instead have started replying on whatever now sits
+in slot 2.
+
+Details:
+
+- **Names are case-sensitive** and may contain dots and spaces. Only commas separate
+  entries; surrounding whitespace is trimmed, internal spaces are kept. `in.secure` is one
+  name, not two.
+- **A name that isn't on the radio logs a WARNING and is skipped** — the rest of the
+  allowlist still applies and the adapter still starts. It is never silently ignored, and
+  it never falls back to an index.
+- **Indices still work** but log a warning recommending names. Mixing is allowed:
+  `MESHTASTIC_REPLY_CHANNELS="in.secure,3"`.
+- **The Primary channel usually has an empty name.** Target it with `Primary` (or
+  `LongFast`), case-insensitively — but only when it truly has no name of its own; if you
+  named your primary, use that name. An empty name never matches a typo, so a mistyped
+  channel name can't accidentally resolve to the public Primary.
+- **Discover the exact names** with the `meshtastic_list_channels` tool (ask the agent to
+  list your Meshtastic channels), or in the REPL: `python -m meshtastic_hermes repl` then
+  `channels`.
+- Before the first successful connect there is no channel table, so a name-only allowlist
+  allows nothing (`allowed_channels=None`) rather than guessing an index. It fills in as
+  soon as the radio connects.
 
 **Authorization (separate from reply policy):** even when a message matches the reply
 policy, Hermes' gateway gates *who* may talk to the agent. By default meshtastic denies
@@ -156,14 +214,21 @@ journalctl --user -u hermes-gateway -f          # systemd user service
 What to look for:
 
 ```
-INFO  meshtastic_platform.adapter: Meshtastic adapter connected to 192.168.55.73 (node !0aca4a9c, reply allowed_channels={1})
+INFO  meshtastic_platform.adapter: Meshtastic adapter connected to 192.168.55.73 (node !0aca4a9c, reply allowed_channels=ChannelSpec(names=('in.secure',), indices=frozenset()))
+INFO  meshtastic_platform.adapter: Meshtastic reply channels resolved: in.secure -> 1
 DEBUG meshtastic_platform.adapter: inbound channel ch=1 from=!a696579c -> REPLY text='ping'
 INFO  meshtastic_platform.adapter: Meshtastic reply sent to ch:1
 ```
 
 - No "connected" line → the adapter isn't running (check `MESHTASTIC_HOST` and that
   `meshtastic-platform` is in `plugins.enabled`).
-- `allowed_channels=None` → only DMs will reply; set `MESHTASTIC_REPLY_CHANNELS=1`.
+- No `reply channels resolved:` line → nothing resolved. Either you set no channels, or
+  every configured name is missing from the radio (look for the `is not on the radio's
+  channel table` WARNING, which lists the names the radio *does* have).
+- `... is not on the radio's channel table` → a name in `MESHTASTIC_REPLY_CHANNELS` doesn't
+  exist on the node. Names are case-sensitive; check them with `meshtastic_list_channels`.
+- `uses numeric channel index/indices` → you're on the legacy index form. Switch to the
+  channel name; indices silently repoint when channels are reordered.
 - `-> skip (policy)` on a channel-1 message → that channel isn't in the allowlist.
 - No `inbound ...` line at all when you send on channel 1 → the message isn't reaching the
   node (RF loss) or your node lacks that channel's key (can't decrypt it).

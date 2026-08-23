@@ -20,8 +20,18 @@ optional_env:
     prompt: "Reply on all channels? (true/false)"
     password: false
   - name: MESHTASTIC_REPLY_CHANNELS
-    description: "Reply on DMs plus these channel indices, e.g. '1' or '1,2' (your private channels). Public Primary (0) is excluded unless listed."
-    prompt: "Reply channels (comma-separated indices, or empty)"
+    description: >-
+      Reply on DMs plus these channels, by NAME — e.g. 'in.secure' or
+      'in.secure,ops' (comma-separated, case-sensitive; names may contain dots and
+      spaces). Names are resolved against the radio's channel table on every connect,
+      so renaming or reordering channels moves the allowlist with the name. Numeric
+      indices ('1', '1,2') still work but are LEGACY and unsafe: an index is a radio
+      SLOT, not a channel identity, so reordering channels silently repoints it and
+      replies meant for a private channel can go out on the public Primary. A name
+      that is not on the radio logs a warning and is skipped; the rest still applies.
+      Public Primary is excluded unless listed (target an unnamed primary as
+      'Primary'). Discover names with the meshtastic_list_channels tool.
+    prompt: "Reply channel names (comma-separated, e.g. in.secure) or empty"
     password: false
   - name: MESHTASTIC_HERMES_DB
     description: "Path to the node-interaction knowledge-base SQLite file (defaults under $HERMES_HOME)."

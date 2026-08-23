@@ -296,6 +296,42 @@ class ConnectionManager:
         )
         return identity
 
+    def channel_table(self) -> list[dict[str, Any]]:
+        """Return the radio's channel table as normalized rows.
+
+        Rows are ``{"index": int, "name": str, "role": int|None}`` — the shape
+        :func:`meshtastic_hermes.gateway_bridge.resolve_channel_spec` consumes. This
+        is the ONLY place channel names are read off the radio, which keeps the
+        allowlist resolution logic a pure function of this data.
+
+        DISABLED channels (role 0) are omitted: they are empty slots, not channels
+        the radio can transmit on. Returns [] when we are not connected.
+        """
+        iface = self._iface
+        if iface is None:
+            return []
+        local = getattr(iface, "localNode", None)
+        channels = getattr(local, "channels", None) or []
+        out: list[dict[str, Any]] = []
+        for idx, ch in enumerate(channels):
+            role = getattr(ch, "role", None)
+            if role == 0:  # DISABLED — an empty slot
+                continue
+            settings = getattr(ch, "settings", None)
+            # Prefer the channel's own index when the radio reports one; fall back
+            # to position, which is what the index means on the wire.
+            index = getattr(ch, "index", None)
+            if not isinstance(index, int):
+                index = idx
+            out.append(
+                {
+                    "index": index,
+                    "name": getattr(settings, "name", "") or "",
+                    "role": role,
+                }
+            )
+        return out
+
     def status(self) -> dict[str, Any]:
         return {
             "connected": self.is_connected(),

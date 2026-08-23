@@ -190,9 +190,12 @@ over the radio. It mirrors Hermes' bundled adapters (e.g. IRC) and reuses this r
 connection/observer/KB code.
 
 - **Reply policy:** direct messages only by default (avoids channel spam and bot loops).
-  Opt specific channels in with `MESHTASTIC_REPLY_CHANNELS="1,2"` (e.g. your private
-  channels — public Primary/0 stays silent unless listed), or `MESHTASTIC_REPLY_ALL=true`
-  for every channel.
+  Opt specific channels in **by name** with `MESHTASTIC_REPLY_CHANNELS="in.secure"` (e.g.
+  your private channel — the public Primary stays silent unless listed), or
+  `MESHTASTIC_REPLY_ALL=true` for every channel. Numeric indices (`"1,2"`) still work but
+  are legacy: an index is a radio *slot*, not a channel identity, so reordering channels
+  silently repoints it and replies can go out on the wrong channel. Names are re-resolved
+  against the radio on every connect. See [docs/usage.md](docs/usage.md#use-channel-names-not-indices).
 - **Encryption:** replies to a DM go out **end-to-end (PKI)** to the sender; channel
   replies use the channel key. Opaque/undecryptable traffic is never answered.
 - **Reachability:** the adapter only sees messages addressed to the node it's connected
@@ -214,7 +217,8 @@ it via the service environment:
     settings.plugins.enabled = [ "meshtastic" "meshtastic-platform" ];
 
     environment.MESHTASTIC_HOST = "192.168.55.73";   # node to connect to
-    environment.MESHTASTIC_REPLY_CHANNELS = "1";     # DMs + channel 1 (omit for DMs only)
+    environment.MESHTASTIC_REPLY_CHANNELS = "in.secure";  # DMs + that named channel
+                                                          # (omit for DMs only)
     # environment.MESHTASTIC_REPLY_ALL = "true";     # or: reply on every channel
   };
 }
