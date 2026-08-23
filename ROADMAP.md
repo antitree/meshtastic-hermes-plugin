@@ -75,15 +75,32 @@ Carried over from the handoff; these are missing *features*, and the tests
 correctly document today's behavior rather than the desired behavior.
 
 - **No airtime safety layer.** No rate limit, no cooldown, no loop detection.
-  The reply policy is a channel allowlist and the only loop guard is
-  `from_id == my_node_id`, which does not catch a *different* bot. Two agent
-  instances on an allowlisted channel will answer each other indefinitely. On a
-  legally regulated shared medium this is the most serious defect in the
-  package. `tests/test_e2e.py::test_e2e_bridge_stays_silent_on_a_public_channel`
-  pins the current mitigation (silence on Primary by default) — it is a
-  mitigation, not a fix.
-- **No mention gating.** There is no concept of addressing the bot by name, so
-  channel replies are all-or-nothing per channel.
+  The only loop guard in the transmit path is `from_id == my_node_id`, which
+  does not catch a *different* bot. On a legally regulated shared medium this
+  remains the most serious defect in the package.
+
+  Two mitigations now stand between a misconfiguration and a runaway loop, and
+  neither is a fix: replies are off on every channel by default (silence on
+  Primary is pinned by
+  `tests/test_e2e.py::test_e2e_bridge_stays_silent_on_a_public_channel`), and
+  mention gating (below) requires a channel message to be addressed to this node.
+  With gating off on a broad scope the adapter logs a loud warning and runs
+  anyway. Neither bounds how much the node transmits, which is what an actual
+  fix would do.
+- **Mention gating exists, but is not airtime safety.** Channel replies are no
+  longer all-or-nothing per channel: `MESHTASTIC_REQUIRE_MENTION` (on by
+  default) requires a channel message to start with this node's short name,
+  long name, or node id. It substantially narrows the loop surface — a bot's
+  reply does not normally open with another bot's name — but it is a gate on
+  *which* messages are answered, not on *how often* the node transmits.
+- **The live rig cannot verify mention gating.** `testrig/remote_probe.py`'s
+  `check_mention_gating` probes `gateway_bridge` for a helper named
+  `mentions_us` / `is_mention` / `should_reply_to_channel` / `_mentions_us`.
+  None of those exist — the implemented function is `match_mention`, with a
+  different signature (keyword-only `short_name`/`long_name`/`node_id`,
+  returning the remaining text or `None`). So the probe reports
+  `NOT_IMPLEMENTED` against a tree where the feature *is* implemented. The
+  check needs updating to the real API before it proves anything.
 
 ## Security scanner — not tracked
 
