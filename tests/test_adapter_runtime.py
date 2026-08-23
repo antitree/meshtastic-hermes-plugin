@@ -5,20 +5,28 @@ gateway runtime (`gateway.platforms.base`, `gateway.config`) is importable, whic
 it is not outside Hermes. So these tests install a *stub* gateway package into
 sys.modules and re-import the adapter module against it.
 
-That stub is the honest limit of these tests: they verify this adapter's own
-logic against the base-class surface it uses (`_set_fatal_error`,
-`_mark_connected`, `build_source`, `handle_message`, `SendResult`). They do NOT
-verify that the stub matches real Hermes — the Hermes source is not available
-here. If the real base class differs, these tests still pass. See ROADMAP.md.
+The stub's abstract surface (`connect`, `disconnect`, `send`, `get_chat_info`)
+and the keyword-only `retryable` on `_set_fatal_error` were transcribed from
+real Hermes source (`NousResearch/hermes-agent`, `gateway/platforms/base.py`
+at commit 8b09a9d), and the stub is an ABC, so a signature drift in this
+adapter now fails these tests rather than passing silently.
+
+The honest limit that remains: the stub is a hand-copied snapshot, not the
+live Hermes package. It cannot notice a FUTURE upstream change to the base
+class, and it models only the base-class surface this adapter actually uses
+(`_set_fatal_error`, `_mark_connected`, `build_source`, `handle_message`,
+`SendResult`) rather than the full ~4000-line class. See ROADMAP.md.
 """
 
 from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import json
 import sys
 import types
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -53,8 +61,19 @@ class _Platform:
         self.name = name
 
 
-class _BasePlatformAdapter:
-    """Minimal stand-in for Hermes' BasePlatformAdapter."""
+class _BasePlatformAdapter(ABC):
+    """Stand-in for Hermes' BasePlatformAdapter.
+
+    The abstract-method signatures below are transcribed from real Hermes
+    (`NousResearch/hermes-agent`, `gateway/platforms/base.py`, verified at
+    commit 8b09a9d) so that this stub actually constrains the contract:
+    because it is an ABC, an adapter that fails to implement one of these is
+    un-instantiable, and `test_connect_signature_matches_base_contract`
+    pins the keyword-only `is_reconnect` that the gateway always passes.
+
+    `_set_fatal_error` takes `retryable` keyword-only, matching real Hermes
+    (`def _set_fatal_error(self, code, message, *, retryable)`).
+    """
 
     def __init__(self, config=None, platform=None):
         self.config = config
@@ -64,7 +83,7 @@ class _BasePlatformAdapter:
         self.fatal = None
         self.handled: list = []
 
-    def _set_fatal_error(self, code, message, retryable=False):
+    def _set_fatal_error(self, code, message, *, retryable):
         self.fatal = {"code": code, "message": message, "retryable": retryable}
 
     def _mark_connected(self):
@@ -78,6 +97,21 @@ class _BasePlatformAdapter:
 
     async def handle_message(self, event):
         self.handled.append(event)
+
+    # ── abstract surface, mirroring real Hermes ──────────────────────────
+    @abstractmethod
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
+        """Real Hermes declares exactly this signature; the gateway calls it
+        as `adapter.connect(is_reconnect=...)` in every code path."""
+
+    @abstractmethod
+    async def disconnect(self) -> None: ...
+
+    @abstractmethod
+    async def send(self, chat_id, content, reply_to=None, metadata=None): ...
+
+    @abstractmethod
+    async def get_chat_info(self, chat_id): ...
 
 
 @dataclass
@@ -151,6 +185,45 @@ def test_config_without_extra_attribute(adapter_mod, monkeypatch):
 # ----------------------------------------------------------------------
 # connect / disconnect
 # ----------------------------------------------------------------------
+
+
+def test_connect_signature_matches_base_contract(adapter_mod):
+    """Regression guard for the TypeError-on-connect bug.
+
+    Real Hermes declares `async def connect(self, *, is_reconnect: bool = False)`
+    and `gateway/run.py::_connect_adapter_with_timeout` ALWAYS calls
+    `adapter.connect(is_reconnect=is_reconnect)` — there is no code path that
+    calls it with no arguments. An adapter declaring `connect(self)` therefore
+    raises TypeError on every connect attempt.
+    """
+    sig = inspect.signature(adapter_mod.MeshtasticAdapter.connect)
+    assert "is_reconnect" in sig.parameters, (
+        "connect() must accept is_reconnect — the gateway always passes it"
+    )
+    param = sig.parameters["is_reconnect"]
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY
+    assert param.default is False
+
+    # And it must match the abstract base declaration exactly.
+    assert sig == inspect.signature(_BasePlatformAdapter.connect)
+
+
+def test_connect_accepts_is_reconnect_keyword(adapter_mod, monkeypatch):
+    """Calling connect the way the gateway actually calls it must not raise."""
+    mgr = _FakeManager(connected=True)
+    _patch_manager(monkeypatch, mgr)
+    a = _make(adapter_mod, monkeypatch, host="10.1.2.3")
+
+    assert asyncio.run(a.connect(is_reconnect=True)) is True
+    assert a.state == "connected"
+    assert mgr.connect_calls  # the reconnect path still actually connects
+
+
+def test_connect_rejects_positional_is_reconnect(adapter_mod, monkeypatch):
+    """is_reconnect is keyword-only in the base contract."""
+    a = _make(adapter_mod, monkeypatch, host="10.1.2.3")
+    with pytest.raises(TypeError):
+        asyncio.run(a.connect(True))
 
 
 def test_connect_without_host_sets_fatal_error(adapter_mod, monkeypatch):

@@ -98,3 +98,38 @@ correctly document today's behavior rather than the desired behavior.
   change the verdict; see `docs/security-scanner.md` for the analysis and the
   counterfactual. When the CRITICALs clear, tighten the `security-scan` job's
   `--max-verdict` from `dangerous` to `caution`, then to `safe`.
+## Release automation — what is NOT verified until the first real run
+
+`scripts/bump_version.py` is unit-tested (`tests/test_version_bump.py`) and the
+two workflows pass `actionlint` and parse as YAML, but a release workflow cannot
+be exercised locally. The following are verified only when they first run for
+real, and the first merged PR / first manual dispatch should be watched:
+
+- **The push to `main`.** Whether `GITHUB_TOKEN` can push depends on repository
+  settings ("Read and write permissions" for Actions) and on branch protection.
+  If `main` is protected without an exemption for `github-actions[bot]`, the
+  push is rejected and the bump job fails *after* rewriting the files.
+- **Tag creation and `gh release create --verify-tag`.**
+- **The `concurrency: version-bump` serialisation** under two PRs merging
+  seconds apart.
+- **`[skip ci]` behaviour.** GitHub honours the marker for `push`/`pull_request`
+  triggers; neither of these workflows listens to those, so today it is
+  documentation of intent plus insurance (see below).
+
+### The failure mode to watch for: a PAT silently removing a loop guard
+
+The bump commit is protected from retriggering by three independent layers:
+
+1. Neither workflow listens to `push`, so their own commit is not a trigger.
+2. Pushes authenticated with `GITHUB_TOKEN` do not trigger workflow runs —
+   GitHub's own guarantee.
+3. `[skip ci]` in the commit subject, plus a `Refuse to bump our own bump
+   commit` step that inspects `HEAD` and exits early.
+
+Layer 2 is the one that disappears without any error message. If branch
+protection is ever tightened so that `github-actions[bot]` cannot push and the
+workflow is changed to use a PAT or a GitHub App token instead, **that push
+does trigger workflows** — layer 2 is gone and nothing reports it. Layers 1 and
+3 are what still hold in that world, which is why both are present even though
+layer 2 alone closes the loop today. If a PAT is ever introduced here, re-read
+this section before also adding a `push:` trigger.

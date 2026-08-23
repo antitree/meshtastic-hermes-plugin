@@ -125,7 +125,19 @@ if _HAVE_GATEWAY:
             return "Meshtastic"
 
         # ── lifecycle ────────────────────────────────────────────────────
-        async def connect(self) -> bool:
+        async def connect(self, *, is_reconnect: bool = False) -> bool:
+            """Connect to the radio and start receiving.
+
+            *is_reconnect* is part of the ``BasePlatformAdapter.connect``
+            contract: the gateway always calls ``connect(is_reconnect=...)``
+            (see Hermes ``gateway/run.py::_connect_adapter_with_timeout``), so
+            this adapter MUST accept the keyword or the call raises TypeError.
+            It is False on a cold first boot and True when the reconnect
+            watcher re-establishes a platform that dropped after an outage.
+
+            Meshtastic has no server-side offline queue to preserve, so the
+            flag changes no behavior here and is only logged.
+            """
             if not self.host:
                 self._set_fatal_error(
                     "config_missing",
@@ -146,7 +158,8 @@ if _HAVE_GATEWAY:
             self._mark_connected()
             if self._mgr.is_connected():
                 logger.info(
-                    "Meshtastic adapter connected to %s (node %s, reply allowed_channels=%r)",
+                    "Meshtastic adapter connected%s to %s (node %s, reply allowed_channels=%r)",
+                    " [reconnect]" if is_reconnect else "",
                     self.host,
                     self._mgr.my_node_id(),
                     self.allowed_channels,
