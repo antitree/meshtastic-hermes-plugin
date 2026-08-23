@@ -1,0 +1,188 @@
+# Automatic patch bump: 0.1.0 -> 0.1.1, once per merged PR.
+#
+# Fires when a pull request is *merged* into main, bumps the third position
+# of the version in every file that declares one, commits that to main, and
+# tags it. PR authors never touch the version themselves, which is what
+# stops two concurrently-open PRs from both claiming 0.1.1.
+#
+# This creates a tag but deliberately NO GitHub Release — see release.yml,
+# the manual minor bump (0.1.1 -> 0.2.0), which is the only thing that
+# publishes to the Releases page. A release per merged PR would bury the
+# releases actually worth reading.
+name: version bump (patch, automatic)
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+# ---------------------------------------------------------------------------
+# LOOP PREVENTION, LAYER 1 of 3
+#
+# This workflow does not listen to `push`. Its own commit to main is
+# therefore not a trigger event for it. Using `push: branches: [main]` here
+# instead would be the textbook retrigger loop: the bump commit is a push to
+# main, which would bump again, forever.
+#
+# `types: [closed]` also fires for a PR closed WITHOUT merging, so the merge
+# itself is checked on the job below.
+# ---------------------------------------------------------------------------
+
+# Least privilege: `contents: write` is needed (this job pushes a commit and
+# a tag) but nothing else is. Note the scope — this workflow has exactly one
+# job, and that job is the one that writes, so a workflow-level block and a
+# job-level block are identical here. release.yml has more than one concern
+# and scopes its write permission to the single job that needs it.
+permissions:
+  contents: write
+
+# Serialise bumps. Two PRs merging seconds apart would otherwise both read
+# the same current version and race to write 0.1.1; with this, the second job
+# waits, re-reads main, and produces 0.1.2. Never cancel-in-progress here: a
+# cancelled bump can leave a pushed commit without its tag.
+concurrency:
+  group: version-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    # The whole workflow hinges on this: a PR closed without merging must not
+    # bump anything. The `skip-version-bump` label is the escape hatch for a
+    # docs-only merge that should not consume a version.
+    if: >-
+      github.event.pull_request.merged == true &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-version-bump')
+    runs-on: ubuntu-latest
+
+    steps:
+      # Actions are pinned to commit SHAs, not mutable tags: a tag can be
+      # repointed at new code, which is a supply-chain risk. Same policy as
+      # tests.yml.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          # The bump commits to main, so check out the branch itself rather
+          # than the detached merge commit, and take full history so the tag
+          # lands on a real ancestor.
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+
+      # -------------------------------------------------------------------
+      # LOOP PREVENTION, LAYER 3a of 3 — the HEAD check.
+      #
+      # Belt and braces. Nothing here is supposed to be able to retrigger
+      # this workflow, but if a `push:` trigger is ever added, or a fork of
+      # this file grows one, this stops the runaway on the first iteration
+      # rather than on the billing page.
+      # -------------------------------------------------------------------
+      - name: Refuse to bump our own bump commit
+        run: |
+          subject="$(git log -1 --pretty=%s)"
+          echo "HEAD subject: $subject"
+          case "$subject" in
+            *"[skip ci]"*|"chore(release):"*)
+              echo "HEAD is an automated bump commit; nothing to do."
+              echo "skip=true" >> "$GITHUB_ENV"
+              ;;
+            *) echo "skip=false" >> "$GITHUB_ENV" ;;
+          esac
+
+      - name: Bump the patch version
+        if: env.skip != 'true'
+        id: bump
+        run: |
+          python scripts/bump_version.py patch | tee /tmp/bump.out
+          grep -E '^(old_version|new_version|tag)=' /tmp/bump.out >> "$GITHUB_OUTPUT"
+
+      # The version is declared in five files. `--check` re-reads all of them
+      # through the same VERSION_FILES list the bump used, so a bad rewrite
+      # fails this job instead of landing on main and turning tests.yml red
+      # for everyone afterwards (tests.yml has its own version-consistency
+      # step and tests/test_version_bump.py asserts the same thing locally —
+      # this is the third gate on the same invariant, at the moment it is
+      # most likely to be violated).
+      - name: Verify every declaration still agrees
+        if: env.skip != 'true'
+        run: |
+          python scripts/bump_version.py --check
+          python - <<'PY'
+          import pathlib, sys
+          sys.path.insert(0, "scripts")
+          from bump_version import current_version
+          version = current_version()
+          changelog = pathlib.Path("CHANGELOG.md").read_text()
+          if f"## [{version}]" not in changelog:
+              sys.exit(f"CHANGELOG.md has no section for {version}")
+          print("CHANGELOG has a section for", version)
+          PY
+
+      - name: Commit and tag
+        if: env.skip != 'true'
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+          TAG: ${{ steps.bump.outputs.tag }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet; then
+            echo "Nothing changed; not committing."
+            exit 0
+          fi
+
+          git add -- pyproject.toml \
+                     meshtastic_hermes/plugin.yaml meshtastic_hermes/__init__.py \
+                     meshtastic_platform/plugin.yaml meshtastic_platform/__init__.py \
+                     CHANGELOG.md
+
+          # -----------------------------------------------------------------
+          # LOOP PREVENTION, LAYERS 2 and 3b of 3.
+          #
+          # Layer 2: the push below authenticates with GITHUB_TOKEN, and
+          # GitHub guarantees that pushes made with GITHUB_TOKEN do not
+          # trigger workflow runs. That alone closes the loop today.
+          #
+          # Layer 3b: the "[skip ci]" marker. It documents the intent AND
+          # survives the case that silently removes layer 2 — if branch
+          # protection ever forces this job to push with a PAT (a personal
+          # access token or a GitHub App token) instead of GITHUB_TOKEN,
+          # that push DOES trigger workflows and layer 2 disappears without
+          # any error message. The marker, together with the HEAD check
+          # above, is what still holds in that world.
+          # -----------------------------------------------------------------
+          git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]" \
+                     -m "Automated patch bump after PR #${PR_NUMBER}."
+
+          # An existing tag is not a failure worth alarming anyone with: it
+          # means this version was already tagged (a re-run, or a manual tag).
+          # Reuse it rather than dying with 'tag already exists'.
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null || \
+             git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::warning::Tag ${TAG} already exists; committing without re-tagging."
+            git push origin HEAD:main
+          else
+            git tag -a "${TAG}" -m "meshtastic-hermes-plugin ${NEW_VERSION}"
+            # Push the commit FIRST: a tag pointing at an unpushed commit
+            # would be a dangling reference if the branch push then failed
+            # (protected branch, race).
+            git push origin HEAD:main
+            git push origin "${TAG}"
+          fi
+
+      - name: Summary
+        if: env.skip != 'true'
+        run: |
+          {
+            echo "### Version bumped"
+            echo
+            echo "\`${{ steps.bump.outputs.old_version }}\` → \`${{ steps.bump.outputs.new_version }}\` (patch)"
+            echo
+            echo "Tagged \`${{ steps.bump.outputs.tag }}\`. No GitHub Release is published for a"
+            echo "patch bump — run the **release (minor, manual)** workflow for that."
+          } >> "$GITHUB_STEP_SUMMARY"

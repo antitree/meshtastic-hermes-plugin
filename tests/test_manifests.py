@@ -141,21 +141,34 @@ def test_platform_max_message_length_matches_the_split_limit():
 
 
 def test_versions_agree_across_every_file_that_declares_one():
-    """A version mismatch here has broken a release before — keep them in lockstep."""
-    text = (REPO / "pyproject.toml").read_text()
-    pyproject_version = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE).group(1)
+    """A version mismatch here has broken a release before — keep them in lockstep.
 
+    The list of declaring files is NOT repeated here. It lives in
+    ``scripts/bump_version.VERSION_FILES``, which is also what the bump script
+    rewrites and what both release workflows re-check. Two copies of that list
+    would be the same drift hazard one level up: adding a sixth declaration
+    and updating only the copy the test reads would leave the bump script
+    silently missing it.
+    """
+    import sys
+
+    sys.path.insert(0, str(REPO / "scripts"))
+    from bump_version import read_versions
+
+    versions = read_versions(REPO)
+    assert len(set(versions.values())) == 1, f"version mismatch: {versions}"
+
+
+def test_the_imported_packages_report_the_declared_version():
+    """read_versions() reads __init__.py as text; this checks the import path
+    agrees, which is what a consumer of the installed wheel actually sees."""
     import meshtastic_hermes
     import meshtastic_platform
 
-    versions = {
-        "pyproject.toml": pyproject_version,
-        "meshtastic_hermes/plugin.yaml": str(_load(TOOLS_MANIFEST)["version"]),
-        "meshtastic_platform/plugin.yaml": str(_load(PLATFORM_MANIFEST)["version"]),
-        "meshtastic_hermes.__version__": meshtastic_hermes.__version__,
-        "meshtastic_platform.__version__": meshtastic_platform.__version__,
-    }
-    assert len(set(versions.values())) == 1, f"version mismatch: {versions}"
+    text = (REPO / "pyproject.toml").read_text()
+    declared = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE).group(1)
+    assert meshtastic_hermes.__version__ == declared
+    assert meshtastic_platform.__version__ == declared
 
 
 # ----------------------------------------------------------------------

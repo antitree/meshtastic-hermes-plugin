@@ -257,3 +257,36 @@ just standalone list    # run the plugin without Hermes (see docs/usage.md)
 ```
 
 See [docs/architecture.md](docs/architecture.md) and [docs/usage.md](docs/usage.md).
+
+### Versioning and releases
+
+**Never edit a version by hand.** Five files declare it — `pyproject.toml`,
+both `plugin.yaml` manifests, and both `__init__.py` — and they must always
+agree. `scripts/bump_version.py` is the only thing that rewrites them; its
+`VERSION_FILES` tuple is the single list of where versions live, read by the
+test suite, by CI, and by both release workflows.
+
+```bash
+python scripts/bump_version.py --check      # verify all five agree
+```
+
+Two workflows do the rest:
+
+| | trigger | bump | tag | GitHub Release |
+|---|---|---|---|---|
+| `version-bump.yml` | a PR merged into `main` | patch (`0.1.0` → `0.1.1`) | yes | no |
+| `release.yml` | manual (Actions tab) | minor (`0.1.1` → `0.2.0`) | yes | yes, notes from `CHANGELOG.md` |
+
+Patch bumps only tag, so the Releases page stays a list of things worth
+reading rather than one entry per merged PR. `release.yml` takes a `dry_run`
+input that prints the bump and the release notes without writing anything.
+There is deliberately no automated major bump.
+
+Label a PR `skip-version-bump` to merge it without consuming a version.
+
+Before cutting a minor release, replace the auto-inserted stub section in
+`CHANGELOG.md` with real prose — that section becomes the Release notes.
+
+`ROADMAP.md` documents what about this machinery is only verifiable on its
+first real run, and the loop-prevention layers that keep a bump commit from
+retriggering a bump.
