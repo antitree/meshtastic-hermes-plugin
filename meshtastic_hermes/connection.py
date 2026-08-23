@@ -87,8 +87,8 @@ def _import_meshtastic():
     except ImportError as exc:  # pragma: no cover - exercised only without extra
         raise MeshtasticUnavailable(
             "The 'meshtastic' package is not installed in Hermes' Python environment. "
-            "Install it with: pip install meshtastic  "
-            "(normally pulled in automatically by pip install meshtastic-hermes-plugin)."
+            "Install the 'meshtastic' package there with pip "
+            "(normally pulled in automatically when this plugin is installed with pip)."
         ) from exc
 
 

@@ -104,7 +104,7 @@ class Observer:
     def recent_messages(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._lock:
             items = list(self._recent)
-        return items[-limit:][::-1]
+        return list(reversed(items[-limit:]))
 
 
 def get_observer() -> Observer:
