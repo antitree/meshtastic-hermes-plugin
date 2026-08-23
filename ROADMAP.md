@@ -85,19 +85,29 @@ correctly document today's behavior rather than the desired behavior.
 - **No mention gating.** There is no concept of addressing the bot by name, so
   channel replies are all-or-nothing per channel.
 
-## Security scanner
+## Security scanner — not tracked
 
-- **Clear the docs findings that block plugin installation** —
-  [#4](https://github.com/antitree/meshtastic-hermes-plugin/issues/4). Hermes'
-  `scan_on_install` rates this repo `DANGEROUS`, which blocks
-  `hermes plugins install` (`--force` does not override). The blockers are two
-  CRITICAL `hermes_config_mod` hits in `README.md:122` and `docs/usage.md:349`
-  — both the documented install procedure — plus three HIGH findings in
-  `docs/usage.md`. Deferred to interactive human work because each fix trades
-  documentation clarity against a regex. Fixing the code findings does **not**
-  change the verdict; see `docs/security-scanner.md` for the analysis and the
-  counterfactual. When the CRITICALs clear, tighten the `security-scan` job's
-  `--max-verdict` from `dangerous` to `caution`, then to `safe`.
+We do not track the Hermes plugin scanner's verdict, and CI does not run it.
+
+The scanner (`tools/plugin_guard.py`) is regex matching over raw file text —
+no parsing, no dataflow, no semantics. In practice that means it flags a
+`| Env |` Markdown table header as "exfiltration", the word `sudo` in a NixOS
+instruction as privilege escalation, and the documented procedure for enabling
+a plugin as "persistence". Hermes' own plugin-authoring guide scores
+`dangerous` under it.
+
+Satisfying it required changing byte sequences rather than behavior, which
+bought no safety and taxed documentation clarity, so we stopped. Write the
+docs to be clear.
+
+`scripts/hermes_scan.py` and `docs/security-scanner.md` are kept for reference
+— run the script by hand if you ever want to see the verdict — but nothing
+gates on them.
+
+**Consequence to know:** `hermes plugins install` performs its own scan and
+will still refuse this plugin on a `dangerous` verdict (`--force` does not
+override). Install via symlink (`just link`) or Nix, as the docs describe.
+
 ## Release automation — what is NOT verified until the first real run
 
 `scripts/bump_version.py` is unit-tested (`tests/test_version_bump.py`) and the
