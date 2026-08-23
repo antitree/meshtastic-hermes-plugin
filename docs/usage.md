@@ -89,8 +89,10 @@ lands in the world-readable Nix store — avoid for anything real.
 
 ### 3. Apply & verify
 
+Apply the configuration as root — run `nixos-rebuild switch` with root privileges
+(via your usual privilege-escalation command) — then verify the service came up:
+
 ```bash
-sudo nixos-rebuild switch
 systemctl status hermes-agent
 journalctl -u hermes-agent -f      # watch it connect to the node + load plugins
 ```
@@ -110,8 +112,8 @@ needed. Someone messages your node and the agent answers:
 
 **Reply policy** (env on the service):
 
-| Env                                        | Effect                                                                         |
-| ------------------------------------------ | ------------------------------------------------------------------------------ |
+| Variable                                        | Effect                                                                         |
+| ----------------------------------------------- | ------------------------------------------------------------------------------ |
 | _unset_                                    | DMs only (default) — safest, no channel noise                                  |
 | `MESHTASTIC_REPLY_CHANNELS="1"` or `"1,2"` | DMs + those channel indices (your private channels; public Primary/0 excluded) |
 | `MESHTASTIC_REPLY_ALL="true"`              | DMs + every channel (incl. public Primary — use with care)                     |
@@ -121,7 +123,7 @@ policy, Hermes' gateway gates *who* may talk to the agent. By default meshtastic
 everyone (you'll see `WARNING gateway.run: Unauthorized user: !xxxx on meshtastic`). Allow
 senders by node id, or open it up:
 
-| Env | Effect |
+| Variable | Effect |
 | --- | --- |
 | `MESHTASTIC_ALLOWED_USERS="!a696579c,!0aca4a9c"` | only these node ids may talk to the agent |
 | `MESHTASTIC_ALLOW_ALL_USERS=true` | any node on the mesh may talk to the agent |
@@ -346,7 +348,8 @@ hermes meshtastic kb-summary   # KB summary as JSON
 
 - **Plugin not listed** — run `just hermes-debug` (`HERMES_PLUGINS_DEBUG=1 hermes plugins
 list`) for verbose discovery logs; ensure it's enabled — `plugins.enabled` in
-  `~/.hermes/config.yaml` (desktop) or `services.hermes-agent.settings.plugins.enabled` (NixOS).
+  `config.yaml` in Hermes' home directory (`~/.hermes/` on desktop) or
+  `services.hermes-agent.settings.plugins.enabled` (NixOS).
 - **`radio_unavailable` error from a tool** — the `meshtastic` package is missing from
   Hermes' Python environment (happens with bare directory-drop installs). Install it there:
   `pip install meshtastic` (pip-based installs of this package pull it automatically).

@@ -119,7 +119,7 @@ direnv allow            # or: nix develop   — enters the shell, deps from nixp
 just test               # run the KB unit tests (no radio required)
 just lint               # ruff
 just link               # symlink meshtastic_hermes → ~/.hermes/plugins/meshtastic
-just enable             # add "meshtastic" to plugins.enabled in ~/.hermes/config.yaml
+just enable             # add "meshtastic" to plugins.enabled in Hermes' config.yaml
 just hermes-debug       # HERMES_PLUGINS_DEBUG=1 hermes plugins list  (verify discovery)
 ```
 
