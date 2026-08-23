@@ -74,33 +74,29 @@ error branches to hit a number, which is the opposite of the intent.
 Carried over from the handoff; these are missing *features*, and the tests
 correctly document today's behavior rather than the desired behavior.
 
-- **No airtime safety layer.** No rate limit, no cooldown, no loop detection.
-  The only loop guard in the transmit path is `from_id == my_node_id`, which
-  does not catch a *different* bot. On a legally regulated shared medium this
-  remains the most serious defect in the package.
+- **Airtime safety layer: not planned.** Dropped by decision on 2026-08-23.
+  There is deliberately no rate limit, no cooldown, and no bot-to-bot loop
+  detection. The only loop guard in the transmit path is
+  `from_id == my_node_id`, which does not catch a *different* bot.
 
-  Two mitigations now stand between a misconfiguration and a runaway loop, and
-  neither is a fix: replies are off on every channel by default (silence on
-  Primary is pinned by
+  What stands in its place, by design rather than as a stopgap: replies are off
+  on every channel by default (silence on Primary is pinned by
   `tests/test_e2e.py::test_e2e_bridge_stays_silent_on_a_public_channel`), and
-  mention gating (below) requires a channel message to be addressed to this node.
-  With gating off on a broad scope the adapter logs a loud warning and runs
-  anyway. Neither bounds how much the node transmits, which is what an actual
-  fix would do.
-- **Mention gating exists, but is not airtime safety.** Channel replies are no
-  longer all-or-nothing per channel: `MESHTASTIC_REQUIRE_MENTION` (on by
-  default) requires a channel message to start with this node's short name,
-  long name, or node id. It substantially narrows the loop surface — a bot's
-  reply does not normally open with another bot's name — but it is a gate on
-  *which* messages are answered, not on *how often* the node transmits.
-- **The live rig cannot verify mention gating.** `testrig/remote_probe.py`'s
-  `check_mention_gating` probes `gateway_bridge` for a helper named
-  `mentions_us` / `is_mention` / `should_reply_to_channel` / `_mentions_us`.
-  None of those exist — the implemented function is `match_mention`, with a
-  different signature (keyword-only `short_name`/`long_name`/`node_id`,
-  returning the remaining text or `None`). So the probe reports
-  `NOT_IMPLEMENTED` against a tree where the feature *is* implemented. The
-  check needs updating to the real API before it proves anything.
+  mention gating requires a channel message to be addressed to this node.
+  Neither bounds how *often* the node transmits — they bound *which* messages
+  are answered. An operator who disables mention gating on a broad reply scope
+  gets a loud warning at every connect and is on their own.
+
+  Do not re-propose this without the operator asking for it.
+- **Mention gating.** `MESHTASTIC_REQUIRE_MENTION` (on by default) requires a
+  channel message to start with this node's short name, long name, or node id.
+  DMs are always answered. This is a gate on which messages are answered, not a
+  transmission budget — see above.
+- **The rig's transmit check is unimplemented.** `--transmit` exists but reports
+  `NOT_IMPLEMENTED`: both candidate send paths either open a second TCP
+  connection to a node that accepts one client, or drive the live gateway. With
+  the airtime layer dropped, enabling it would need its own bound — e.g. a hard
+  cap on sends per run — rather than waiting on rate limiting that is not coming.
 
 ## Security scanner — not tracked
 

@@ -140,8 +140,11 @@ Sending would require one of two things, and both are ruled out:
    codebase with no rate limiting.
 
 `--transmit` therefore currently reports `NOT_IMPLEMENTED` rather than sending.
-Implementing it properly needs a dedicated test channel on the radio *and* a
-cooldown in the plugin first.
+
+A plugin-side rate limit is **not planned** (see ROADMAP.md), so this check is
+not waiting on one. Implementing it needs a dedicated test channel on the radio
+plus a bound the rig enforces itself — a hard cap on sends per run — rather than
+relying on the plugin to throttle.
 
 ### What is NOT covered
 
