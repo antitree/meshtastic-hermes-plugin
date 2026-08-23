@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meshtastic-hermes-plugin"
-version = "0.1.2"
+version = "0.1.3"
 description = "Hermes Agent plugin to interact with a Meshtastic mesh over TCP/IP and build a node-interaction knowledge base"
 readme = "README.md"
 requires-python = ">=3.10"
