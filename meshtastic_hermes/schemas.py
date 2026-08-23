@@ -5,15 +5,24 @@ CONNECT = {
     "description": (
         "Usually NOT needed: when MESHTASTIC_HOST is set the plugin auto-connects at "
         "startup and a supervisor keeps the link up and reconnects automatically. Call "
-        "this only to connect to a SPECIFIC host (when MESHTASTIC_HOST is unset), to "
-        "switch nodes, or to force a reconnect. Opens the TCP link and starts observing "
-        "traffic into the knowledge base."
+        "this only to force a reconnect. Opens the TCP link and starts observing traffic "
+        "into the knowledge base.\n"
+        "The radio target is fixed by configuration, NOT by you: MESHTASTIC_HOST is "
+        "authoritative, and switching nodes is not allowed. Call this with NO arguments. "
+        "Passing a 'host' that differs from the configured one is rejected (it is only "
+        "accepted when the operator has set MESHTASTIC_ALLOW_DYNAMIC_HOSTS=true)."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "host": {"type": "string", "description": "Node host/IP, e.g. '192.168.55.73'. Optional if MESHTASTIC_HOST is set."},
-            "port": {"type": "integer", "description": "TCP port (default 4403)."},
+            "host": {
+                "type": "string",
+                "description": (
+                    "Node host/IP. Normally OMIT this — the configured MESHTASTIC_HOST "
+                    "is used and a different host is rejected."
+                ),
+            },
+            "port": {"type": "integer", "description": "TCP port 1-65535 (default 4403)."},
         },
         "required": [],
     },

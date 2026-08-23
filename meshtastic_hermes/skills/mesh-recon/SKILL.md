@@ -27,7 +27,8 @@ does not modify the mesh or send anything.
 
 - The `meshtastic` plugin loaded. The connection is normally **automatic**: when
   `MESHTASTIC_HOST` is set the plugin auto-connects and self-heals, so you don't need to
-  call `meshtastic_connect`. Only connect manually if `MESHTASTIC_HOST` is unset.
+  call `meshtastic_connect`. The radio target is fixed by configuration: if you do call
+  it, call it with **no arguments** — a `host` other than the configured one is rejected.
 - Observation time: the knowledge base fills only while connected — let it run.
 
 ## Quick Reference
@@ -42,7 +43,8 @@ does not modify the mesh or send anything.
 ## Procedure
 
 1. Check status with `meshtastic_kb_summary` or `/meshtastic`; the link is auto-managed
-   when `MESHTASTIC_HOST` is set. Only call `meshtastic_connect <host>` if it's unset.
+   when `MESHTASTIC_HOST` is set. If you need to force a reconnect, call
+   `meshtastic_connect` with no arguments.
 2. Let the knowledge base accumulate — observation is passive and ongoing. On a fresh
    connection, allow some minutes of traffic before drawing conclusions.
 3. Start broad with `meshtastic_kb_summary`: node count, packet totals (note the

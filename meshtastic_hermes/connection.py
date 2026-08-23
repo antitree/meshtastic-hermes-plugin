@@ -119,6 +119,138 @@ def enable_debug_logging() -> bool:
     return True
 
 
+class ConnectTargetRejected(ValueError):
+    """Raised when a requested connect target is not allowed by policy.
+
+    Carries a machine-readable ``code`` so the tool layer can return a stable
+    JSON error shape instead of parsing the message.
+    """
+
+    def __init__(self, message: str, code: str = "connect_target_rejected") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+# Truthy spellings, mirroring the sets used by MESHTASTIC_DEBUG / MESHTASTIC_REPLY_ALL.
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def allow_dynamic_hosts() -> bool:
+    """Whether a tool call may name a Meshtastic host that MESHTASTIC_HOST did not.
+
+    Defaults to FALSE. Only an explicit truthy value ("1"/"true"/"yes"/"on", any
+    case) enables it: the failure mode of an accidental "on" is a tool call
+    repointing the process-wide radio link at an arbitrary host, so a typo must
+    leave the restriction in place (fail closed).
+    """
+    return os.environ.get("MESHTASTIC_ALLOW_DYNAMIC_HOSTS", "").strip().lower() in _TRUTHY
+
+
+def _allowed_hosts_from_env() -> list[str]:
+    """Parse MESHTASTIC_ALLOWED_HOSTS into hostname / IP / CIDR entries."""
+    raw = os.environ.get("MESHTASTIC_ALLOWED_HOSTS", "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _host_matches(host: str, entry: str) -> bool:
+    """True when *host* matches one allowlist *entry* (hostname, IP, or CIDR)."""
+    import ipaddress
+
+    host = host.strip()
+    if host.lower() == entry.lower():
+        return True
+    # CIDR / bare-IP entries only match when the request is itself a literal IP.
+    # We deliberately do NOT resolve names here: DNS is attacker-influenceable and
+    # resolving would make the allowlist decision depend on a lookup we cannot pin.
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    try:
+        return addr in ipaddress.ip_network(entry, strict=False)
+    except ValueError:
+        return False
+
+
+def validate_port(port: Any = None) -> int:
+    """Coerce *port* to an int in the valid TCP range, defaulting to 4403.
+
+    Raises :class:`ConnectTargetRejected` on anything else. Pure: mutates nothing.
+    """
+    if port is None or (isinstance(port, str) and not port.strip()):
+        return DEFAULT_TCP_PORT
+    if isinstance(port, bool):  # bool is an int subclass — reject it explicitly
+        raise ConnectTargetRejected("port must be an integer.", code="invalid_port")
+    if isinstance(port, float) and not port.is_integer():
+        raise ConnectTargetRejected(f"port {port!r} is not an integer.", code="invalid_port")
+    try:
+        value = int(port)
+    except (TypeError, ValueError):
+        raise ConnectTargetRejected(
+            f"port {port!r} is not an integer.", code="invalid_port"
+        ) from None
+    if not 1 <= value <= 65535:
+        raise ConnectTargetRejected(
+            f"port {value} is outside the valid TCP port range 1-65535.", code="invalid_port"
+        )
+    return value
+
+
+def validate_connect_target(host: Any = None, port: Any = None) -> tuple[str, int]:
+    """Resolve and authorize a connect target. Returns ``(host, port)``.
+
+    MESHTASTIC_HOST is authoritative: when it is set, a caller-supplied host that
+    differs from it is REJECTED rather than silently honored, so a tool call
+    cannot repoint the process-wide radio link away from the configured node.
+    When MESHTASTIC_HOST is unset, a caller-supplied host is rejected unless
+    MESHTASTIC_ALLOW_DYNAMIC_HOSTS is explicitly enabled — and, when
+    MESHTASTIC_ALLOWED_HOSTS is also configured, unless the host matches it.
+
+    Raises :class:`ConnectTargetRejected` and mutates NOTHING, so callers can
+    validate before touching any connection state.
+    """
+    if host is not None and not isinstance(host, str):
+        raise ConnectTargetRejected(
+            f"host must be a string, got {type(host).__name__}.", code="invalid_host"
+        )
+
+    env_host = (os.environ.get("MESHTASTIC_HOST") or "").strip()
+    requested = (host or "").strip()
+
+    if not requested:
+        if not env_host:
+            raise ConnectTargetRejected(
+                "No host given and MESHTASTIC_HOST is not set.", code="no_host"
+            )
+        resolved = env_host
+    elif env_host:
+        if requested != env_host:
+            raise ConnectTargetRejected(
+                f"host {requested!r} is not allowed: MESHTASTIC_HOST is the configured "
+                "radio target and cannot be overridden by a tool call. Omit 'host' to "
+                "connect to the configured node.",
+                code="host_not_allowed",
+            )
+        resolved = env_host
+    else:
+        if not allow_dynamic_hosts():
+            raise ConnectTargetRejected(
+                f"host {requested!r} is not allowed: MESHTASTIC_HOST is unset and dynamic "
+                "hosts are disabled. Set MESHTASTIC_HOST to the radio, or set "
+                "MESHTASTIC_ALLOW_DYNAMIC_HOSTS=true to permit caller-supplied hosts.",
+                code="dynamic_hosts_disabled",
+            )
+        allowlist = _allowed_hosts_from_env()
+        if allowlist and not any(_host_matches(requested, entry) for entry in allowlist):
+            raise ConnectTargetRejected(
+                f"host {requested!r} is not in MESHTASTIC_ALLOWED_HOSTS.",
+                code="host_not_in_allowlist",
+            )
+        resolved = requested
+
+    return resolved, validate_port(port)
+
+
 class MeshtasticUnavailable(RuntimeError):
     """Raised when the optional `meshtastic` package is not importable."""
 
@@ -167,7 +299,14 @@ class ConnectionManager:
         """Open a TCP connection to `host` and subscribe the observer.
 
         Idempotent-ish: an existing connection is closed first.
+
+        The port is validated BEFORE anything is written: a rejected target must
+        not leave the manager pointing somewhere new, nor disturb a healthy link.
+        Host policy is enforced at the tool boundary by
+        :func:`validate_connect_target` (the CLI and platform adapter pass an
+        operator- or env-supplied host, which is trusted by construction).
         """
+        port = validate_port(port)
         self._host = host
         self._port = port
         self._want_connected = True

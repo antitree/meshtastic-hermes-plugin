@@ -37,7 +37,13 @@ provides_hooks:
 # twice.
 optional_env:
   - name: MESHTASTIC_HOST
-    description: "Default Meshtastic node host/IP for TCP auto-connect (e.g. 192.168.1.50). Optional: tools accept an explicit host."
+    description: "Meshtastic node host/IP for TCP auto-connect (e.g. 192.0.2.10). AUTHORITATIVE: when set, meshtastic_connect rejects any different tool-supplied host, so a tool call cannot repoint the radio link."
+    secret: false
+  - name: MESHTASTIC_ALLOW_DYNAMIC_HOSTS
+    description: "Set to true to let meshtastic_connect use a caller-supplied host when MESHTASTIC_HOST is unset. Default: false (dynamic hosts rejected). Only an explicit truthy value enables it, so a typo fails closed."
+    secret: false
+  - name: MESHTASTIC_ALLOWED_HOSTS
+    description: "Optional comma-separated allowlist of hostnames, IPs, or CIDR ranges (e.g. 192.0.2.0/24,your-host.example.com) applied when MESHTASTIC_ALLOW_DYNAMIC_HOSTS is on. Unset means any host is allowed once dynamic hosts are enabled."
     secret: false
   - name: MESHTASTIC_HERMES_DB
     description: "Path to the SQLite knowledge-base file. Defaults to $HERMES_HOME/meshtastic_kb.sqlite. Optional."
