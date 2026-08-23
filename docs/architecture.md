@@ -38,6 +38,26 @@ which delivers _all_ packet types including encrypted `PRIVATE_APP` frames). A
 `threading.Lock` guards connect/disconnect. The `meshtastic` import is lazy and raises
 `MeshtasticUnavailable` (caught by the tool wrapper) when the `meshtastic` package is absent.
 
+A background supervisor keeps the link alive and reports **three** states rather than a
+boolean, because "not connected" cannot distinguish a node that is still booting from a
+configuration that will never work:
+
+- `connected` — a live, usable interface.
+- `connecting` — still retrying at full rate, below `MESHTASTIC_FAILURE_THRESHOLD`
+  consecutive failures. Connection refused / timeout / DNS failure land here; a booting
+  node refusing TCP is expected, not an error.
+- `disconnected` — an explicit disconnect, never tried, a **hard** failure (only a
+  missing `meshtastic` package), or the failure threshold was crossed and the supervisor
+  dropped to `MESHTASTIC_SLOW_RETRY_SECONDS`. Retrying never stops, so the link still
+  self-heals; the status just stops claiming otherwise.
+
+`status()` exposes `state` alongside the legacy `connected` bool, which is `True` only in
+the `connected` state — anything gating a send on it keeps behaving correctly.
+
+Note the node itself accepts **one TCP client at a time**, so this process-wide singleton
+is not merely an optimization: a second interface to the same node would displace the
+first.
+
 ### `observer.py` — `Observer` (singleton)
 
 The receive callback. It must never raise (that would kill the radio's listener thread),
@@ -95,6 +115,23 @@ gateway. `meshtastic_platform/adapter.py` subclasses `BasePlatformAdapter`:
   thread→event-loop boundary with `asyncio.run_coroutine_threadsafe(self._dispatch(...))`.
   `_dispatch` builds a `MessageEvent` and calls `self.handle_message(event)`; the base
   routes it to the agent and calls `send()` with the reply.
+- **Reply policy, in two stages.** `_on_rx` first calls `gateway_bridge.should_reply` with
+  the resolved channel allowlist, then `gateway_bridge.apply_mention_gate`, which on a
+  channel requires the text to open with a mention of this node and **strips it** before
+  the agent sees it (DMs pass through untouched). A third gate — *who* may talk to the
+  agent — is Hermes', driven by the `allowed_users_env` / `allow_all_env` names passed to
+  `register_platform`; it is not implemented in this repo. All three must pass.
+- **Channel names resolve at connect time.** `MESHTASTIC_REPLY_CHANNELS` is parsed once
+  into an unresolved `ChannelSpec` (names and/or legacy indices), then re-resolved against
+  the radio's live channel table on **every** connect and reconnect. That is what makes a
+  rename or reorder on the radio move the allowlist with the name instead of leaving a
+  stale index pointed at a different channel. Parsing is pure; resolution takes the table
+  as data, so both are unit-testable without a radio. Before the first connect a
+  name-based spec resolves to nothing — it fails closed rather than guessing an index.
+- **Identity refresh.** The names mention gating matches against come from the radio's
+  node DB, which lags the connection by seconds, so `_refresh_identity` runs on every
+  connect. With gating on and no identity at all, channel traffic is dropped rather than
+  answered — fail closed.
 - **Outbound:** `send(chat_id, content)` maps the `chat_id` back to radio params via
   `gateway_bridge.outbound_target` and reuses `tools.send_text` (run in an executor).
 - **Decoupling:** all routing/policy lives in `gateway_bridge.py` (pure, unit-tested), so

@@ -73,13 +73,17 @@ wins and the other reuses it (no churn).
 
     # Non-secret env shared by both plugins:
     environment = {
-      MESHTASTIC_HOST = "192.168.55.73";      # node to connect to (TCP)
+      MESHTASTIC_HOST = "192.0.2.10";      # node to connect to (TCP)
       # Gateway reply policy (meshtastic-platform):
       MESHTASTIC_REPLY_CHANNELS = "in.secure"; # reply to DMs + the channel NAMED in.secure
       # MESHTASTIC_REPLY_ALL = "true";        # …or reply on every channel incl. public Primary
       # On a channel the bot only answers messages starting with its own name/id
       # (DMs always answered). Turning this off risks a bot-to-bot reply loop:
       # MESHTASTIC_REQUIRE_MENTION = "0";
+      # Sender allowlist — REQUIRED for any reply. Hermes denies every sender by
+      # default, so without one of these the gateway answers nothing (not even DMs):
+      MESHTASTIC_ALLOWED_USERS = "!deadbeef";     # node ids allowed to talk to the agent
+      # MESHTASTIC_ALLOW_ALL_USERS = "true";      # …or anyone on the mesh
       # MESHTASTIC_HERMES_DB = "/var/lib/hermes/meshtastic_kb.sqlite";  # KB path override
     };
   };
@@ -111,7 +115,53 @@ needed. Someone messages your node and the agent answers:
 3. The agent's reply is sent back over the radio — **PKI end-to-end** for a DM, or on the
    channel for a channel message.
 
-**Reply policy** (env on the service):
+### The three gates
+
+Whether an inbound mesh message reaches the agent is decided by **three independent
+gates, all of which must pass**. They were added at different times and are configured
+by different variables, so it is worth holding all three in view at once:
+
+| # | Gate | Asks | Configured by | Default |
+| --- | --- | --- | --- | --- |
+| 1 | [Channel allowlist](#gate-1--channel-allowlist) | *Is this channel one I may speak on?* | `MESHTASTIC_REPLY_CHANNELS` / `MESHTASTIC_REPLY_ALL` | DMs only |
+| 2 | [Mention gating](#gate-2--mention-gating-channels-only) | *Was this message addressed to me?* | `MESHTASTIC_REQUIRE_MENTION` | on |
+| 3 | [Sender allowlist](#gate-3--sender-allowlist-who-may-talk-to-the-agent) | *Is this sender permitted?* | `MESHTASTIC_ALLOWED_USERS` / `MESHTASTIC_ALLOW_ALL_USERS` | deny everyone |
+
+Gates 1 and 2 are this plugin's; gate 3 is enforced by Hermes' gateway from the
+`allowed_users_env` / `allow_all_env` this plugin registers.
+
+**A direct message skips gates 1 and 2** — it is already addressed to this node — but it
+still has to pass gate 3.
+
+**With nothing configured the gateway answers nothing.** DMs clear gates 1 and 2 but are
+refused by gate 3, which denies by default. You will see
+`WARNING gateway.run: Unauthorized user: !xxxx on meshtastic` in the log. That is the
+intended out-of-the-box state, not a bug.
+
+A worked minimal config — node short name `REDB`, long name `RED Box`, id `!deadbeef`,
+private channel named `in.secure`:
+
+```sh
+MESHTASTIC_HOST=192.0.2.10
+MESHTASTIC_REPLY_CHANNELS=in.secure      # gate 1: DMs + the channel named in.secure
+MESHTASTIC_ALLOWED_USERS=!deadbeef       # gate 3: that node may talk to the agent
+                                         # gate 2: left at its default (on)
+```
+
+With that config, on `in.secure`:
+
+| Message from `!deadbeef` on `in.secure` | Result |
+| --- | --- |
+| `REDB weather?` | answered — agent sees `weather?` |
+| `what is the weather?` | ignored (gate 2: not addressed to this node) |
+| `ask REDB about the weather` | ignored (gate 2: mention is mid-sentence) |
+| the same text on the public Primary | ignored (gate 1: channel not allowlisted) |
+| a DM saying `weather?` | answered — DMs skip gates 1 and 2 |
+| the same DM from an unlisted node | refused (gate 3) |
+
+### Gate 1 — channel allowlist
+
+The reply policy is configured with environment variables on the service:
 
 | Env                                                     | Effect                                                                            |
 | ------------------------------------------------------- | --------------------------------------------------------------------------------- |
@@ -122,9 +172,65 @@ needed. Someone messages your node and the agent answers:
 | `MESHTASTIC_REPLY_ALL="true"`                           | DMs + every channel (incl. public Primary — use with care)                        |
 
 An allowlisted channel is **necessary but not sufficient**: on a channel the message must
-*also* be addressed to this node. See [Mention gating](#mention-gating-channels-only) next.
+*also* be addressed to this node. See [Mention gating](#gate-2--mention-gating-channels-only) next.
 
-#### Mention gating (channels only)
+#### Use channel names, not indices
+
+> **Why this matters.** A channel index is a **slot on the radio, not a channel
+> identity.** If you reorder or edit channels on the node, index `2` starts pointing
+> at a *different* channel — and the bot keeps transmitting replies there. On a shared,
+> legally regulated RF medium that means a reply meant for your private channel can go
+> out on a public one. Configure **names**; they follow the channel.
+
+Concrete example. Your node has:
+
+```
+0  <unnamed primary>   PRIMARY     (public)
+1  public.chat         SECONDARY
+2  in.secure           SECONDARY   (private)
+```
+
+Set:
+
+```sh
+MESHTASTIC_REPLY_CHANNELS="in.secure"
+```
+
+At connect the adapter resolves the name against the radio's live channel table and logs
+what it resolved to:
+
+```
+INFO  meshtastic_platform.adapter: Meshtastic reply channels resolved: in.secure -> 2
+```
+
+Later you delete `public.chat`, and `in.secure` slides up to index `1`. Nothing to change
+— the adapter **re-resolves the name on every connect**, so on the next (re)connect it logs
+`in.secure -> 1` and keeps replying on the right channel. An index-based config
+(`MESHTASTIC_REPLY_CHANNELS="2"`) would instead have started replying on whatever now sits
+in slot 2.
+
+Details:
+
+- **Names are case-sensitive** and may contain dots and spaces. Only commas separate
+  entries; surrounding whitespace is trimmed, internal spaces are kept. `in.secure` is one
+  name, not two.
+- **A name that isn't on the radio logs a WARNING and is skipped** — the rest of the
+  allowlist still applies and the adapter still starts. It is never silently ignored, and
+  it never falls back to an index.
+- **Indices still work** but log a warning recommending names. Mixing is allowed:
+  `MESHTASTIC_REPLY_CHANNELS="in.secure,3"`.
+- **The Primary channel usually has an empty name.** Target it with `Primary` (or
+  `LongFast`), case-insensitively — but only when it truly has no name of its own; if you
+  named your primary, use that name. An empty name never matches a typo, so a mistyped
+  channel name can't accidentally resolve to the public Primary.
+- **Discover the exact names** with the `meshtastic_list_channels` tool (ask the agent to
+  list your Meshtastic channels), or in the REPL: `python -m meshtastic_hermes repl` then
+  `channels`.
+- Before the first successful connect there is no channel table, so a name-only allowlist
+  allows nothing (`allowed_channels=None`) rather than guessing an index. It fills in as
+  soon as the radio connects.
+
+### Gate 2 — mention gating (channels only)
 
 > **Why this exists.** A channel allowlist on its own makes the bot reply to **every**
 > message on that channel. Put two such bots on one channel and each one's reply triggers
@@ -205,81 +311,36 @@ risk. The adapter still starts — your config is honored — but the risk is st
 > of a runaway loop by requiring messages to be addressed to you, but it does not bound how
 > much you transmit. Treat it as one mitigation, not a solution.
 
-#### Use channel names, not indices
+### Gate 3 — sender allowlist (who may talk to the agent)
 
-> **Why this matters.** A channel index is a **slot on the radio, not a channel
-> identity.** If you reorder or edit channels on the node, index `2` starts pointing
-> at a *different* channel — and the bot keeps transmitting replies there. On a shared,
-> legally regulated RF medium that means a reply meant for your private channel can go
-> out on a public one. Configure **names**; they follow the channel.
-
-Concrete example. Your node has:
-
-```
-0  <unnamed primary>   PRIMARY     (public)
-1  public.chat         SECONDARY
-2  in.secure           SECONDARY   (private)
-```
-
-Set:
-
-```sh
-MESHTASTIC_REPLY_CHANNELS="in.secure"
-```
-
-At connect the adapter resolves the name against the radio's live channel table and logs
-what it resolved to:
-
-```
-INFO  meshtastic_platform.adapter: Meshtastic reply channels resolved: in.secure -> 2
-```
-
-Later you delete `public.chat`, and `in.secure` slides up to index `1`. Nothing to change
-— the adapter **re-resolves the name on every connect**, so on the next (re)connect it logs
-`in.secure -> 1` and keeps replying on the right channel. An index-based config
-(`MESHTASTIC_REPLY_CHANNELS="2"`) would instead have started replying on whatever now sits
-in slot 2.
-
-Details:
-
-- **Names are case-sensitive** and may contain dots and spaces. Only commas separate
-  entries; surrounding whitespace is trimmed, internal spaces are kept. `in.secure` is one
-  name, not two.
-- **A name that isn't on the radio logs a WARNING and is skipped** — the rest of the
-  allowlist still applies and the adapter still starts. It is never silently ignored, and
-  it never falls back to an index.
-- **Indices still work** but log a warning recommending names. Mixing is allowed:
-  `MESHTASTIC_REPLY_CHANNELS="in.secure,3"`.
-- **The Primary channel usually has an empty name.** Target it with `Primary` (or
-  `LongFast`), case-insensitively — but only when it truly has no name of its own; if you
-  named your primary, use that name. An empty name never matches a typo, so a mistyped
-  channel name can't accidentally resolve to the public Primary.
-- **Discover the exact names** with the `meshtastic_list_channels` tool (ask the agent to
-  list your Meshtastic channels), or in the REPL: `python -m meshtastic_hermes repl` then
-  `channels`.
-- Before the first successful connect there is no channel table, so a name-only allowlist
-  allows nothing (`allowed_channels=None`) rather than guessing an index. It fills in as
-  soon as the radio connects.
-
-**Authorization (separate from reply policy):** even when a message matches the reply
-policy, Hermes' gateway gates *who* may talk to the agent. By default meshtastic denies
-everyone (you'll see `WARNING gateway.run: Unauthorized user: !xxxx on meshtastic`). Allow
-senders by node id, or open it up:
+Gates 1 and 2 decide *which messages* are considered. This gate decides *which senders*
+are permitted, and it is enforced by **Hermes' gateway**, not by this plugin: the plugin
+only tells Hermes which variables to read (`allowed_users_env`, `allow_all_env` in
+`register()`).
 
 | Env | Effect |
 | --- | --- |
-| `MESHTASTIC_ALLOWED_USERS="!a696579c,!0aca4a9c"` | only these node ids may talk to the agent |
-| `MESHTASTIC_ALLOW_ALL_USERS=true` | any node on the mesh may talk to the agent |
-| _neither_ | deny all (default) |
+| _neither set_ **(default)** | Deny everyone. Nothing is answered, not even DMs. |
+| `MESHTASTIC_ALLOWED_USERS="!deadbeef,!0aca4a9c"` | Only these node ids may talk to the agent. |
+| `MESHTASTIC_ALLOW_ALL_USERS=true` | Any node on the mesh may talk to the agent. |
 
-The reply policy (`MESHTASTIC_REPLY_CHANNELS`/`_ALL`) decides *which channels are
-considered*, mention gating (`MESHTASTIC_REQUIRE_MENTION`) decides *which messages on them
-are addressed to you*, and the allow-list decides *which senders are permitted*. All three
-must pass before the agent is invoked.
+A sender who fails this gate produces a log line like:
+
+```
+WARNING gateway.run: Unauthorized user: !a696579c on meshtastic
+```
+
+That line means gates 1 and 2 **passed** — the message was on an allowlisted channel and
+addressed to this node — and only the sender check rejected it. If you expected a reply,
+add the node id to `MESHTASTIC_ALLOWED_USERS`.
+
+`MESHTASTIC_ALLOW_ALL_USERS=true` combined with a broad channel scope means any node in
+radio range can drive your agent. On a public channel, prefer an explicit id list.
 
 **Before deploying, validate the exact behavior locally** with the bridge simulator (no
 Hermes, no transmit) — see [Simulate the gateway loop](#standalone-testing-without-hermes)
-below. It uses the same routing/policy code as the adapter.
+below. It runs gates 1 and 2 with the same code the adapter uses. Gate 3 is Hermes' and is
+not simulated.
 
 **Reachability caveat:** the agent only answers messages it actually _receives_. A peer's
 message must be addressed to your connected node and survive the RF path — multi-hop DMs on
@@ -303,7 +364,7 @@ journalctl --user -u hermes-gateway -f          # systemd user service
 What to look for:
 
 ```
-INFO  meshtastic_platform.adapter: Meshtastic adapter connected to 192.168.55.73 (node !0aca4a9c, reply allowed_channels=ChannelSpec(names=('in.secure',), indices=frozenset()))
+INFO  meshtastic_platform.adapter: Meshtastic adapter connected to 192.0.2.10 (node !0aca4a9c, reply allowed_channels=ChannelSpec(names=('in.secure',), indices=frozenset()))
 INFO  meshtastic_platform.adapter: Meshtastic reply channels resolved: in.secure -> 1
 DEBUG meshtastic_platform.adapter: inbound channel ch=1 from=!a696579c -> REPLY text='ping'
 INFO  meshtastic_platform.adapter: Meshtastic reply sent to ch:1
@@ -321,12 +382,12 @@ INFO  meshtastic_platform.adapter: Meshtastic reply sent to ch:1
 - `-> skip (policy)` on a channel-1 message → that channel isn't in the allowlist.
 - `-> skip (not addressed to us)` on a channel message → the channel *is* allowlisted, but
   the text didn't start with a mention of this node. Address it (`REDB ...`) or set
-  `MESHTASTIC_REQUIRE_MENTION=0`. See [Mention gating](#mention-gating-channels-only).
+  `MESHTASTIC_REQUIRE_MENTION=0`. See [Mention gating](#gate-2--mention-gating-channels-only).
 - `mention gating is DEGRADED` / `reported NO identity` → the radio hasn't published its
   `short_name`/`long_name` yet. Node-id mentions still work; name mentions start working
   once the node DB catches up. It clears itself on the next connect.
 - `UNSAFE MESHTASTIC REPLY CONFIGURATION` → gating is off on a broad reply scope. The
-  adapter still runs; see [Mention gating](#mention-gating-channels-only).
+  adapter still runs; see [Mention gating](#gate-2--mention-gating-channels-only).
 - No `inbound ...` line at all when you send on channel 1 → the message isn't reaching the
   node (RF loss) or your node lacks that channel's key (can't decrypt it).
 
@@ -339,7 +400,7 @@ first (`hermes gateway stop`) to avoid competing for the radio's TCP slot.
 1. **Optionally** set a default node so the plugin auto-connects each session:
 
    ```bash
-   export MESHTASTIC_HOST=192.168.55.73
+   export MESHTASTIC_HOST=192.0.2.10
    ```
 
 2. Start Hermes and confirm the plugin loaded:
@@ -365,7 +426,7 @@ If `MESHTASTIC_HOST` is unset, ask the agent to connect with a host, which calls
 ```json
 {
   "name": "meshtastic_connect",
-  "arguments": { "host": "192.168.55.73", "port": 4403 }
+  "arguments": { "host": "192.0.2.10", "port": 4403 }
 }
 ```
 
@@ -416,7 +477,7 @@ python -m meshtastic_hermes call meshtastic_kb_summary
 # Interactive shell with a PERSISTENT connection (auto-connects to the host, or
 # MESHTASTIC_HOST). Connect once, then send/read across multiple commands.
 # Friendly verbs take the channel INDEX before the text (avoids a Primary flood):
-python -m meshtastic_hermes repl 192.168.55.73
+python -m meshtastic_hermes repl 192.0.2.10
 #   meshtastic> channels                         # find the index you want
 #   meshtastic> send 1 hello pommeraie           # broadcast on channel 1 (channel-PSK)
 #   meshtastic> dm !444a8c86 hi there            # private direct message (end-to-end/PKI)
@@ -430,19 +491,19 @@ python -m meshtastic_hermes repl 192.168.55.73
 #   meshtastic> quit                              # type 'help' for all commands
 
 # One-shot: connect, observe live traffic for N seconds, dump nodes + KB
-python -m meshtastic_hermes observe 192.168.55.73 30
+python -m meshtastic_hermes observe 192.0.2.10 30
 
 # Simulate the GATEWAY loop (same routing/policy as the platform adapter, no Hermes):
 # prints each matched inbound message and the reply it WOULD send.
-python -m meshtastic_hermes bridge 192.168.55.73              # DMs only, dry-run (no transmit)
-python -m meshtastic_hermes bridge 192.168.55.73 --channels 1 # DMs + channel 1, dry-run
-python -m meshtastic_hermes bridge 192.168.55.73 --channels 1 --send  # actually echo-reply
-python -m meshtastic_hermes bridge 192.168.55.73 --all        # every channel incl. Primary
+python -m meshtastic_hermes bridge 192.0.2.10              # DMs only, dry-run (no transmit)
+python -m meshtastic_hermes bridge 192.0.2.10 --channels in.secure # DMs + that named channel, dry-run
+python -m meshtastic_hermes bridge 192.0.2.10 --channels in.secure --send  # actually echo-reply
+python -m meshtastic_hermes bridge 192.0.2.10 --all        # every channel incl. Primary
 
 # Mention gating is ON here too, matching the adapter: on a channel, only messages
 # starting with this node's name/id are matched (DMs always are). To see the
 # reply-to-everything behavior instead:
-python -m meshtastic_hermes bridge 192.168.55.73 --channels 1 --no-mention
+python -m meshtastic_hermes bridge 192.0.2.10 --channels in.secure --no-mention
 ```
 
 The `bridge` simulator prints a line per matched message and exits after the window
@@ -532,7 +593,7 @@ stop**. It backs off to `MESHTASTIC_SLOW_RETRY_SECONDS`, so the link still self-
 unattended when the radio comes back. The transition is logged clearly:
 
 ```
-WARNING meshtastic_hermes.connection: Meshtastic connect to 192.168.55.73 failed 10
+WARNING meshtastic_hermes.connection: Meshtastic connect to 192.0.2.10 failed 10
 consecutive times (threshold 10) — reporting state=disconnected and backing off to a
 slow retry every 300s. Retrying continues in the background so the node can still
 self-heal.
@@ -546,7 +607,7 @@ Example JSON:
 {
   "connected": false,
   "state": "connecting",
-  "host": "192.168.55.73",
+  "host": "192.0.2.10",
   "consecutive_failures": 3,
   "slow_retry": false,
   "node_id": null
@@ -569,6 +630,35 @@ Both fall back to the default if unset, non-numeric, or not greater than zero.
 
 ## Troubleshooting
 
+> **Read this first: a Meshtastic node accepts exactly ONE TCP client at a time.**
+>
+> Port `4403` serves a single client. Whoever connects first holds the slot, and every
+> other client is refused until that one lets go. This one fact explains most confusing
+> gateway symptoms, because the gateway service normally holds the slot **permanently**:
+>
+> - `hermes chat` cannot connect to the radio — the gateway already has it.
+> - `python -m meshtastic_hermes repl/observe/bridge` fails or knocks something offline.
+> - Meshtastic's phone/desktop app cannot reach the node over WiFi.
+> - The live test rig deliberately never dials the node at all (see
+>   [docs/testing.md](testing.md#safety-rules)).
+>
+> There is no sharing and no queueing. To use another client, stop the gateway first
+> (`hermes gateway stop`), do your work, then start it again. If you need both at once,
+> you need a second radio.
+
+- **`meshtastic status` says `connected` but TCP is refused** — the two are answering
+  different questions. `state` reports what the **connection manager in that process**
+  believes about the link it holds; a `Connection refused` you get from `nc` or another
+  client is the node refusing a *second* TCP client, per the one-slot rule above. So
+  "gateway says connected" and "I cannot connect" are both true and consistent.
+
+  A status can also be briefly **stale**: the manager reports the last state it observed,
+  so if the node drops the session it can read `connected` until the supervisor notices
+  and moves it to `connecting`. If you suspect this, check the gateway journal for
+  reconnect activity rather than re-reading the status — and remember `/meshtastic` in an
+  interactive chat reports a **different process's** connection from the gateway's.
+
+
 - **Plugin not listed** — run `just hermes-debug` (`HERMES_PLUGINS_DEBUG=1 hermes plugins
 list`) for verbose discovery logs; ensure it's enabled — `plugins.enabled` in
   `~/.hermes/config.yaml` (desktop) or `services.hermes-agent.settings.plugins.enabled` (NixOS).
@@ -583,13 +673,13 @@ list`) for verbose discovery logs; ensure it's enabled — `plugins.enabled` in
   [Connection state](#connection-state-connected-connecting-disconnected)).
 - **`hermes setup` says "Set these env vars in ~/.hermes/.env: MESHTASTIC_HOST" even
   though it IS set** — and the gateway log on the same run says
-  `meshtastic-platform registered (MESHTASTIC_HOST=10.2.2.60, ...)`. That banner is not
+  `meshtastic-platform registered (MESHTASTIC_HOST=192.0.2.10, ...)`. That banner is not
   a check; it is Hermes' fallback for a platform plugin that registers no setup helper
   (`hermes_cli/gateway.py::_configure_platform`), and it prints the declared
   `required_env` list *unconditionally* — it never reads the value, so it says the same
   thing whether or not the var is set. This plugin now registers a real `setup_fn`, so
   `hermes setup gateway` → Meshtastic reports the actual state ("MESHTASTIC_HOST is
-  already set (10.2.2.60)") and prints the exact file it writes to. If you still see the
+  already set (192.0.2.10)") and prints the exact file it writes to. If you still see the
   old banner, you are running an older build of the plugin — upgrade it.
   The banner also appeared **twice** because both `plugin.yaml` manifests declared
   `MESHTASTIC_HOST`; only `meshtastic_platform` does now.

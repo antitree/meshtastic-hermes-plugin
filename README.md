@@ -93,7 +93,7 @@ uses (the overlay populates `python311Packages`, `python312Packages`, … via
     settings.plugins.enabled = [ "meshtastic" ];
 
     # Optional: auto-connect on session start (non-secret env).
-    environment.MESHTASTIC_HOST = "192.168.55.73";
+    environment.MESHTASTIC_HOST = "192.0.2.10";
   };
 }
 ```
@@ -135,19 +135,62 @@ hermes plugins enable meshtastic  # plugins are disabled by default
 
 ## Configuration
 
-Two optional environment variables (prompted during `hermes plugins install`):
+Everything is configured with environment variables. Only `MESHTASTIC_HOST` is required,
+and only for the gateway adapter — the tools plugin works without it (every tool that
+needs a radio takes an explicit `host` argument, and the knowledge-base tools need no
+radio at all).
 
-| Variable               | Purpose                                            | Default                                                                                             |
-| ---------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `MESHTASTIC_HOST`      | Node host/IP for TCP auto-connect on session start | _unset_ (no auto-connect)                                                                           |
-| `MESHTASTIC_HERMES_DB` | SQLite knowledge-base path                         | `$HERMES_HOME/meshtastic_kb.sqlite` (next to Hermes' config), else `~/.hermes/meshtastic_kb.sqlite` |
+Put them wherever the Hermes process will read them: `$HERMES_HOME/.env` (see
+[Which `.env` file?](docs/usage.md#troubleshooting) for profiles), or
+`services.hermes-agent.environment` on NixOS.
 
-When `MESHTASTIC_HOST` is set, the plugin auto-connects (and starts observing) on each
-new session; otherwise call `meshtastic_connect` explicitly.
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `MESHTASTIC_HOST` | _unset_ | Node host/IP to reach over TCP (port `4403`). Required by the gateway adapter; without it the adapter stays dormant. Also used by the tools plugin to auto-connect on session start. |
+| `MESHTASTIC_REPLY_ALL` | _unset_ (off) | `1`/`true`/`yes` = the gateway may reply on **every** channel, including the public Primary. Overrides `MESHTASTIC_REPLY_CHANNELS`. |
+| `MESHTASTIC_REPLY_CHANNELS` | _unset_ (DMs only) | Comma-separated channel **names** the gateway may reply on, e.g. `in.secure`. `all` means every channel. Numeric indices work but are legacy and unsafe — see [Use channel names, not indices](docs/usage.md#use-channel-names-not-indices). |
+| `MESHTASTIC_REQUIRE_MENTION` | _unset_ (**on**) | When on, a **channel** message is answered only if it starts with this node's name or id. `0`/`false`/`no` turns it off. DMs are always answered either way. |
+| `MESHTASTIC_ALLOWED_USERS` | _unset_ | Comma-separated node ids permitted to talk to the agent, e.g. `!deadbeef,!0aca4a9c`. Enforced by Hermes' gateway, not by this plugin. |
+| `MESHTASTIC_ALLOW_ALL_USERS` | _unset_ (off) | `true` lets any node on the mesh talk to the agent. With neither this nor `MESHTASTIC_ALLOWED_USERS`, the gateway **denies everyone**. |
+| `MESHTASTIC_HERMES_DB` | `$HERMES_HOME/meshtastic_kb.sqlite` | SQLite knowledge-base path. |
+| `MESHTASTIC_DEBUG` | _unset_ (off) | `1`/`true`/`yes`/`on` logs every inbound message and each reply/skip decision to the gateway journal, regardless of the gateway's own log level. |
+| `MESHTASTIC_FAILURE_THRESHOLD` | `10` | Consecutive failed connect attempts before the status reports `disconnected` instead of `connecting`. A single success resets it. |
+| `MESHTASTIC_SLOW_RETRY_SECONDS` | `300` | Retry interval once that threshold is passed. Retrying never stops, it only slows down. |
+
+The last two fall back to their default if unset, non-numeric, or not greater than zero.
 
 The KB path is resolved in priority order: `MESHTASTIC_HERMES_DB` → `$HERMES_HOME`
 (Hermes' own home, e.g. `/var/lib/hermes/.hermes` under the NixOS service) → systemd's
 `$STATE_DIRECTORY` → `~/.hermes/`.
+
+### When does the bot reply?
+
+Three independent gates decide whether an inbound mesh message reaches the agent.
+**All three must pass.** Getting this wrong is how a bot ends up transmitting where it
+shouldn't, so it is worth reading once in full — the detail is in
+[docs/usage.md](docs/usage.md#gateway-autonomous-replies-over-the-mesh).
+
+| # | Gate | Asks | Configured by | Default |
+| --- | --- | --- | --- | --- |
+| 1 | Channel allowlist | *Is this channel one I may speak on?* | `MESHTASTIC_REPLY_CHANNELS` / `MESHTASTIC_REPLY_ALL` | DMs only |
+| 2 | Mention gating | *Was this message addressed to me?* | `MESHTASTIC_REQUIRE_MENTION` | on (must be addressed) |
+| 3 | Sender allowlist | *Is this sender allowed to talk to the agent?* | `MESHTASTIC_ALLOWED_USERS` / `MESHTASTIC_ALLOW_ALL_USERS` | deny everyone |
+
+**Direct messages skip gates 1 and 2** — a DM is already addressed to this node — but
+they still face gate 3, so a DM from an unlisted node is refused by Hermes with
+`Unauthorized user: !xxxx on meshtastic`.
+
+Out of the box, then, the gateway answers **nothing**: DMs are allowed by the reply
+policy but denied by the sender allowlist. That is deliberate. A minimal working config
+for a node with short name `REDB` on a private channel named `in.secure`:
+
+```sh
+MESHTASTIC_HOST=192.0.2.10
+MESHTASTIC_REPLY_CHANNELS=in.secure     # gate 1: DMs + that named channel
+MESHTASTIC_ALLOWED_USERS=!deadbeef      # gate 3: this node may talk to the agent
+# gate 2 is left at its default, so on in.secure the bot answers "REDB weather"
+# but ignores "what's the weather?"
+```
 
 ## Tools
 
@@ -189,14 +232,18 @@ channel: inbound mesh text **drives the agent**, and the agent's replies are sen
 over the radio. It mirrors Hermes' bundled adapters (e.g. IRC) and reuses this repo's
 connection/observer/KB code.
 
-- **Reply policy:** direct messages only by default (avoids channel spam and bot loops).
+Three gates decide whether an inbound message reaches the agent, and **all three must
+pass** — see [When does the bot reply?](#when-does-the-bot-reply) above for the summary
+and [docs/usage.md](docs/usage.md#the-three-gates) for the worked detail.
+
+- **Reply policy (gate 1):** direct messages only by default (avoids channel spam and bot loops).
   Opt specific channels in **by name** with `MESHTASTIC_REPLY_CHANNELS="in.secure"` (e.g.
   your private channel — the public Primary stays silent unless listed), or
   `MESHTASTIC_REPLY_ALL=true` for every channel. Numeric indices (`"1,2"`) still work but
   are legacy: an index is a radio *slot*, not a channel identity, so reordering channels
   silently repoints it and replies can go out on the wrong channel. Names are re-resolved
   against the radio on every connect. See [docs/usage.md](docs/usage.md#use-channel-names-not-indices).
-- **Mention gating (default on):** on a **channel**, the bot only answers a message that
+- **Mention gating (gate 2, default on):** on a **channel**, the bot only answers a message that
   **starts with** its own short name, long name, or node id — `REDB weather`, `redb:
   weather`, `@RED Box weather`, `!deadbeef weather` (case-insensitive, optional `@`, node
   id with or without `!`). A mention mid-sentence (`ask REDB about the weather`) does not
@@ -206,7 +253,16 @@ connection/observer/KB code.
   transmit at each other without end on shared, regulated spectrum. Disable with
   `MESHTASTIC_REQUIRE_MENTION=0` (a loud warning is logged if you also widen the scope).
   Note this is a mitigation, not an airtime limiter: there is still no rate limit or
-  cooldown. See [docs/usage.md](docs/usage.md#mention-gating-channels-only).
+  cooldown. See [docs/usage.md](docs/usage.md#gate-2--mention-gating-channels-only).
+- **Sender allowlist (gate 3):** enforced by Hermes' gateway, not this plugin. With
+  neither `MESHTASTIC_ALLOWED_USERS` nor `MESHTASTIC_ALLOW_ALL_USERS` set it **denies
+  everyone**, so a fresh install answers nothing until you list the node ids allowed to
+  talk to the agent. A rejected sender logs `Unauthorized user: !xxxx on meshtastic`.
+  See [docs/usage.md](docs/usage.md#gate-3--sender-allowlist-who-may-talk-to-the-agent).
+- **One TCP client at a time:** a Meshtastic node serves exactly **one** TCP client on
+  port `4403`. The gateway holds that slot while it runs, so `hermes chat`, the REPL, the
+  phone app and anything else are refused until you stop it. This is the single most
+  common source of confusing "cannot connect" reports.
 - **Encryption:** replies to a DM go out **end-to-end (PKI)** to the sender; channel
   replies use the channel key. Opaque/undecryptable traffic is never answered.
 - **Reachability:** the adapter only sees messages addressed to the node it's connected
@@ -227,13 +283,17 @@ it via the service environment:
     # Enable the tools plugin and/or the gateway adapter (both come from this package):
     settings.plugins.enabled = [ "meshtastic" "meshtastic-platform" ];
 
-    environment.MESHTASTIC_HOST = "192.168.55.73";   # node to connect to
+    environment.MESHTASTIC_HOST = "192.0.2.10";   # node to connect to
     environment.MESHTASTIC_REPLY_CHANNELS = "in.secure";  # DMs + that named channel
                                                           # (omit for DMs only)
     # environment.MESHTASTIC_REPLY_ALL = "true";     # or: reply on every channel
     # On a channel the bot only answers messages starting with its own name/id
     # (DMs are always answered). Turning this off risks a bot-to-bot reply loop:
     # environment.MESHTASTIC_REQUIRE_MENTION = "0";
+
+    # REQUIRED to get any reply at all: Hermes denies every sender by default.
+    environment.MESHTASTIC_ALLOWED_USERS = "!deadbeef";  # node ids allowed to talk
+    # environment.MESHTASTIC_ALLOW_ALL_USERS = "true";   # …or anyone on the mesh
   };
 }
 ```
@@ -247,11 +307,11 @@ The inbound→reply routing lives in [gateway_bridge.py](meshtastic_hermes/gatew
 
 ```bash
 # Watch inbound DMs and print the reply the agent WOULD send (no transmit):
-python -m meshtastic_hermes bridge 192.168.55.73        # or: just standalone bridge ...
+python -m meshtastic_hermes bridge 192.0.2.10        # or: just standalone bridge ...
 # Reply on DMs + your private channel(s), and actually transmit (echo responder):
-python -m meshtastic_hermes bridge 192.168.55.73 --channels 1 --send
+python -m meshtastic_hermes bridge 192.0.2.10 --channels in.secure --send
 # Or every channel incl. public Primary:
-python -m meshtastic_hermes bridge 192.168.55.73 --all
+python -m meshtastic_hermes bridge 192.0.2.10 --all
 ```
 
 It prints a line per matched message, e.g.:

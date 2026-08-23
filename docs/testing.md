@@ -92,7 +92,7 @@ not fail the run — they are reported honestly rather than counted as passes.
 | `setup_banner` | **live** | A `setup_fn` is registered (which is what suppresses Hermes' static "MESHTASTIC_HOST is unset" fallback banner), and the real `hermes_cli.config.get_env_value` resolves the host on the live profile. |
 | `channel_resolution` | **live** | The configured reply channels — read through the adapter's own env parser against the live profile — are present on the real radio and resolve **by name** to indices. |
 | `receive_path` | **live** | Real inbound packets were decoded and routed by the running gateway, with normalized chat ids. Evidence comes from the gateway's log; zero airtime. |
-| `mention_gating` | **not implemented here** | Reports `NOT_IMPLEMENTED` when the feature is absent from the tree under test. It is wired up and will verify against the node's real short name, long name and node id once the feature lands. |
+| `mention_gating` | **currently ineffective** | Intended to verify gating against the node's real short name, long name and node id. It does not do so today — see below. |
 | `transmit` | **not implemented** | See below. |
 
 #### Why `base_contract` matters most
@@ -109,6 +109,26 @@ with an explicit diff:
           base: (self, *, is_reconnect: bool = False) -> bool
           impl: (self) -> 'bool'
 ```
+
+#### Why `mention_gating` reports `NOT_IMPLEMENTED`
+
+Not because the feature is missing — mention gating **is** implemented, and is on by
+default (see [usage](usage.md#gate-2--mention-gating-channels-only)). The probe simply
+looks for the wrong function.
+
+`check_mention_gating` searches `meshtastic_hermes.gateway_bridge` for a helper named
+`mentions_us`, `is_mention`, `should_reply_to_channel`, or `_mentions_us`, and reports
+`NOT_IMPLEMENTED` when it finds none. None of those names has ever existed. The real
+entry points are `match_mention(text, *, short_name, long_name, node_id)` — which
+returns the text with the mention stripped, or `None` — and `apply_mention_gate`, which
+applies it to a whole inbound message. The probe also calls its candidate as
+`gate(text, identity)`, which matches neither signature.
+
+So the check is a false negative: it says "nothing to verify" about a feature that is
+live. Until the probe is updated to call `match_mention`, treat a `NOT_IMPLEMENTED` here
+as "unverified", not as "absent". The unit suite does cover the logic
+(`tests/test_mention_gating.py`, `tests/test_mention_gating_adapter.py`); what is missing
+is the check against the node's *real* names on live hardware.
 
 #### Why `transmit` is not implemented
 
@@ -127,7 +147,9 @@ cooldown in the plugin first.
 
 - **Transmit / end-to-end round trip.** Nothing is ever sent. A reply's content
   is never verified on air.
-- **Mention gating**, until the feature lands on the branch under test.
+- **Mention gating against the node's real names.** The feature is implemented and
+  unit-tested, but the rig's probe looks for helper names that do not exist, so it
+  reports `NOT_IMPLEMENTED` rather than checking anything (see above).
 - **Radio-level behavior**: signal quality, retries, ACKs, mesh routing,
   multi-hop delivery, encryption correctness on the wire.
 - **Channel *indices* on the radio's own channel table.** The rig resolves names
