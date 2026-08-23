@@ -77,6 +77,9 @@ wins and the other reuses it (no churn).
       # Gateway reply policy (meshtastic-platform):
       MESHTASTIC_REPLY_CHANNELS = "in.secure"; # reply to DMs + the channel NAMED in.secure
       # MESHTASTIC_REPLY_ALL = "true";        # …or reply on every channel incl. public Primary
+      # On a channel the bot only answers messages starting with its own name/id
+      # (DMs always answered). Turning this off risks a bot-to-bot reply loop:
+      # MESHTASTIC_REQUIRE_MENTION = "0";
       # MESHTASTIC_HERMES_DB = "/var/lib/hermes/meshtastic_kb.sqlite";  # KB path override
     };
   };
@@ -117,6 +120,90 @@ needed. Someone messages your node and the agent answers:
 | `MESHTASTIC_REPLY_CHANNELS="in.secure,ops"`             | DMs + both named channels (comma-separated)                                       |
 | `MESHTASTIC_REPLY_CHANNELS="1"` or `"1,2"`              | **Legacy.** DMs + those channel *indices*. Still works, but see the warning below |
 | `MESHTASTIC_REPLY_ALL="true"`                           | DMs + every channel (incl. public Primary — use with care)                        |
+
+An allowlisted channel is **necessary but not sufficient**: on a channel the message must
+*also* be addressed to this node. See [Mention gating](#mention-gating-channels-only) next.
+
+#### Mention gating (channels only)
+
+> **Why this exists.** A channel allowlist on its own makes the bot reply to **every**
+> message on that channel. Put two such bots on one channel and each one's reply triggers
+> the other's — they transmit at each other without end. The plugin's only other loop guard
+> is "ignore messages from my own node id", which by construction cannot catch a *different*
+> node. On LoRa — a **shared, legally regulated** medium — that is not merely noise: an
+> unbounded loop occupies airtime everyone in radio range depends on and can breach your
+> region's duty-cycle limits. So by default the bot only answers when it is **spoken to**.
+
+**Direct messages are always answered** and never need a mention — a DM is already
+addressed to this node. Gating applies to **channels only**.
+
+On a channel, the message must **start with** this node's short name, long name, or node
+id. Given short name `REDB`, long name `RED Box`, node id `!deadbeef`, all of these are
+answered:
+
+```
+REDB can you give me the weather?
+redb weather
+ReDb: Weather now
+RED BOX can you give me the weather
+@redb weather
+@RED Box weather now
+!deadbeef weather
+@!deadbeef weather
+```
+
+And these are **ignored** — the mention is not at the start, or is not a whole word:
+
+```
+ask REDB about the weather      # mention mid-sentence
+I think RED Box is offline      # mention mid-sentence
+REDBOX weather                  # longer word that merely starts with "REDB"
+what is the weather?            # no mention at all
+```
+
+The rules:
+
+- **Case-insensitive** for all three identifiers.
+- An optional leading `@` is accepted (`@redb`, `@RED Box`, `@!deadbeef`).
+- The **node id matches with or without its leading `!`** (`!deadbeef` or `deadbeef`).
+- The mention must be followed by **end-of-string, whitespace, or a `:` / `,`**, which is
+  consumed. This is the word-boundary rule that stops short name `RED` from answering
+  `REDBOX` or `REDDIT`.
+- The **long name is matched literally**, spaces and punctuation included — never
+  token-by-token. Names containing regex metacharacters (`R.B`) match only themselves.
+- When several identifiers match, the **longest wins**, so with short name `RED` and long
+  name `RED Box`, `RED Box weather` strips the whole long name rather than leaving
+  `Box weather`.
+
+**The mention is stripped before the agent sees it.** `REDB weather now` reaches the agent
+as `weather now`, so the agent isn't repeatedly told its own name. A bare mention with
+nothing after it (`REDB`) is still forwarded, with empty text — being called by name is
+worth a "yes?" rather than silence.
+
+| Env                               | Effect                                                                       |
+| --------------------------------- | ---------------------------------------------------------------------------- |
+| _unset_ **(default)**             | Channel messages must start with a mention of this node. DMs always answered |
+| `MESHTASTIC_REQUIRE_MENTION="0"`  | Reply to **every** message on an allowlisted channel (`0`/`false`/`no`)       |
+
+Only an explicit `0`, `false`, or `no` (case-insensitive) turns gating off. Anything else —
+including a typo like `off` — leaves it **on**: the failure mode of an accidental "off" is
+unbounded transmission, so it fails closed.
+
+**If identity is unknown, gating fails closed.** The radio's node DB can take a few seconds
+to report `short_name`/`long_name` after connect, while the node id is available
+immediately. The adapter gates on whatever it has and logs the degraded state; if it has
+*nothing* it **ignores all channel traffic** rather than replying to everyone. DMs keep
+working throughout.
+
+**Turning gating off on a broad scope logs a loud warning at every connect.** If
+`MESHTASTIC_REQUIRE_MENTION` is off *and* the scope is broad (`MESHTASTIC_REPLY_ALL`, or an
+allowlist including public Primary index 0), you get a multi-line `WARNING` naming the loop
+risk. The adapter still starts — your config is honored — but the risk is stated plainly.
+
+> **Mention gating is not an airtime-safety layer.** This plugin still has **no rate limit,
+> no cooldown, and no bot-to-bot loop detection**. Gating substantially reduces the chance
+> of a runaway loop by requiring messages to be addressed to you, but it does not bound how
+> much you transmit. Treat it as one mitigation, not a solution.
 
 #### Use channel names, not indices
 
@@ -185,8 +272,10 @@ senders by node id, or open it up:
 | `MESHTASTIC_ALLOW_ALL_USERS=true` | any node on the mesh may talk to the agent |
 | _neither_ | deny all (default) |
 
-The reply policy (`MESHTASTIC_REPLY_CHANNELS`/`_ALL`) decides *which messages are
-considered*; the allow-list decides *which senders are permitted*. Both must pass.
+The reply policy (`MESHTASTIC_REPLY_CHANNELS`/`_ALL`) decides *which channels are
+considered*, mention gating (`MESHTASTIC_REQUIRE_MENTION`) decides *which messages on them
+are addressed to you*, and the allow-list decides *which senders are permitted*. All three
+must pass before the agent is invoked.
 
 **Before deploying, validate the exact behavior locally** with the bridge simulator (no
 Hermes, no transmit) — see [Simulate the gateway loop](#standalone-testing-without-hermes)
@@ -230,6 +319,14 @@ INFO  meshtastic_platform.adapter: Meshtastic reply sent to ch:1
 - `uses numeric channel index/indices` → you're on the legacy index form. Switch to the
   channel name; indices silently repoint when channels are reordered.
 - `-> skip (policy)` on a channel-1 message → that channel isn't in the allowlist.
+- `-> skip (not addressed to us)` on a channel message → the channel *is* allowlisted, but
+  the text didn't start with a mention of this node. Address it (`REDB ...`) or set
+  `MESHTASTIC_REQUIRE_MENTION=0`. See [Mention gating](#mention-gating-channels-only).
+- `mention gating is DEGRADED` / `reported NO identity` → the radio hasn't published its
+  `short_name`/`long_name` yet. Node-id mentions still work; name mentions start working
+  once the node DB catches up. It clears itself on the next connect.
+- `UNSAFE MESHTASTIC REPLY CONFIGURATION` → gating is off on a broad reply scope. The
+  adapter still runs; see [Mention gating](#mention-gating-channels-only).
 - No `inbound ...` line at all when you send on channel 1 → the message isn't reaching the
   node (RF loss) or your node lacks that channel's key (can't decrypt it).
 
@@ -341,6 +438,11 @@ python -m meshtastic_hermes bridge 192.168.55.73              # DMs only, dry-ru
 python -m meshtastic_hermes bridge 192.168.55.73 --channels 1 # DMs + channel 1, dry-run
 python -m meshtastic_hermes bridge 192.168.55.73 --channels 1 --send  # actually echo-reply
 python -m meshtastic_hermes bridge 192.168.55.73 --all        # every channel incl. Primary
+
+# Mention gating is ON here too, matching the adapter: on a channel, only messages
+# starting with this node's name/id are matched (DMs always are). To see the
+# reply-to-everything behavior instead:
+python -m meshtastic_hermes bridge 192.168.55.73 --channels 1 --no-mention
 ```
 
 The `bridge` simulator prints a line per matched message and exits after the window

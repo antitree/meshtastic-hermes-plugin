@@ -350,6 +350,15 @@ def _cmd_bridge(ctx: FakeContext, args) -> int:
     mgr = get_manager()
     print(_pretty(json.dumps(mgr.connect(host))))
     my = mgr.my_node_id()
+    identity = gb.Identity.from_status(mgr.local_node_identity())
+    # Mention gating is ON by default here too, matching the platform adapter.
+    require_mention = not args.no_mention
+    if require_mention and not identity:
+        print(
+            "warning: the radio reported no identity yet — with mention gating on, "
+            "channel messages will all be skipped (DMs still work).",
+            file=sys.stderr,
+        )
     if args.all:
         allowed_channels = gb.ALL_CHANNELS
     else:
@@ -362,7 +371,14 @@ def _cmd_bridge(ctx: FakeContext, args) -> int:
 
     def on_rx(packet, interface=None):
         try:
-            result = gb.process_inbound(packet, my, simulate_reply, allowed_channels=allowed_channels)
+            result = gb.process_inbound(
+                packet,
+                my,
+                simulate_reply,
+                allowed_channels=allowed_channels,
+                identity=identity,
+                require_mention=require_mention,
+            )
         except Exception:
             return
         if result is None:
@@ -372,7 +388,12 @@ def _cmd_bridge(ctx: FakeContext, args) -> int:
         if result["action"] == "skip":
             print(f"[skip {tag}] {inb['from_id']}: {inb['text']!r}")
             return
-        print(f"[inbound {tag}] {inb['from_id']}: {inb['text']!r}")
+        shown = inb["text"]
+        if inb.get("raw_text") is not None:
+            shown = f"{inb['raw_text']!r} -> (mention stripped) {inb['text']!r}"
+        else:
+            shown = repr(shown)
+        print(f"[inbound {tag}] {inb['from_id']}: {shown}")
         print(f"  -> reply to {result['chat_id']}: {result['reply']!r}")
         if args.send:
             tgt = result["target"]
@@ -396,6 +417,11 @@ def _cmd_bridge(ctx: FakeContext, args) -> int:
         scope = f"DMs + channels {sorted(allowed_channels)}"
     else:
         scope = "DMs only"
+    scope += (
+        f", channel replies require a mention of {identity.short_name or identity.node_id!r}"
+        if require_mention
+        else ", replying to EVERY channel message (mention gating OFF)"
+    )
     print(
         f"Bridge simulator [{mode}, {scope}], local node {my}. "
         f"Running {int(args.seconds)}s (Ctrl-C to stop)...",
@@ -435,6 +461,14 @@ def main(argv=None) -> int:
     p_bridge.add_argument("seconds", nargs="?", type=int, default=300)
     p_bridge.add_argument("--send", action="store_true", help="Actually transmit replies")
     p_bridge.add_argument("--all", action="store_true", help="Reply on every channel (incl. public Primary)")
+    p_bridge.add_argument(
+        "--no-mention",
+        action="store_true",
+        help=(
+            "Reply to EVERY message on an allowed channel, not just ones starting "
+            "with this node's name/id. Loop risk — see MESHTASTIC_REQUIRE_MENTION."
+        ),
+    )
     p_bridge.add_argument(
         "--channels",
         help=(

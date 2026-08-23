@@ -397,6 +397,10 @@ def test_on_rx_skips_channel_traffic_by_default(adapter_mod, monkeypatch):
 
 
 def test_on_rx_dispatches_allowed_channel(adapter_mod, monkeypatch):
+    # Mention gating now defaults ON, so an allowlisted channel is necessary but no
+    # longer sufficient — the message must also be addressed to us. _FakeManager
+    # reports short_name="MESH". The gating-off variant is covered in
+    # tests/test_mention_gating_adapter.py.
     monkeypatch.setenv("MESHTASTIC_REPLY_CHANNELS", "2")
     mgr = _FakeManager(node_id="!aabbccdd")
     _patch_manager(monkeypatch, mgr)
@@ -406,11 +410,12 @@ def test_on_rx_dispatches_allowed_channel(adapter_mod, monkeypatch):
 
     async def flow():
         await a.connect()
-        a._on_rx(_text_packet("hi", to_id="^all", channel=2))
+        a._on_rx(_text_packet("MESH hi", to_id="^all", channel=2))
         await asyncio.sleep(0.05)
 
     asyncio.run(flow())
     assert len(a.handled) == 1
+    assert a.handled[0].text == "hi", "the mention must be stripped before the agent"
     assert a.handled[0].source["chat_id"] == "ch:2"
     assert a.handled[0].source["chat_type"] == "group"
 

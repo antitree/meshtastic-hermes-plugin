@@ -141,6 +141,10 @@ def test_named_channel_drives_inbound_dispatch(adapter_mod, monkeypatch):  # noq
     """The resolved index really gates inbound traffic, and traffic on the slot the
     name does NOT occupy is ignored."""
     monkeypatch.setenv("MESHTASTIC_REPLY_CHANNELS", "in.secure")
+    # This test is about NAME->index resolution gating inbound traffic, so take
+    # mention gating out of the picture; it has its own tests in
+    # tests/test_mention_gating_adapter.py.
+    monkeypatch.setenv("MESHTASTIC_REQUIRE_MENTION", "false")
     mgr = _FakeManager(channels=[PRIMARY, _ch(1, "public.chat"), _ch(2, "in.secure")])
     _patch_manager(monkeypatch, mgr)
     a = _make(adapter_mod, monkeypatch)

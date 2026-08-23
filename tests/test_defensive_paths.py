@@ -67,7 +67,7 @@ def test_bridge_reports_a_missing_radio_stack(monkeypatch, capsys):
     monkeypatch.setattr(builtins, "__import__", fake_import)
     ctx = m.build_registry()
     args = types.SimpleNamespace(
-        host="1.2.3.4", seconds=1, send=False, all=False, channels=None
+        host="1.2.3.4", seconds=1, send=False, all=False, channels=None, no_mention=True
     )
     assert m._cmd_bridge(ctx, args) == 1
     assert "radio stack not installed" in capsys.readouterr().out
@@ -108,7 +108,7 @@ def test_bridge_ignores_a_packet_that_is_not_a_text_frame(monkeypatch, capsys):
     monkeypatch.setattr(m.time, "sleep", deliver)
     ctx = m.build_registry()
     args = types.SimpleNamespace(
-        host="1.2.3.4", seconds=1, send=False, all=False, channels=None
+        host="1.2.3.4", seconds=1, send=False, all=False, channels=None, no_mention=True
     )
     assert m._cmd_bridge(ctx, args) == 0
     out = capsys.readouterr().out

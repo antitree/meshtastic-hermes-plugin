@@ -196,6 +196,17 @@ connection/observer/KB code.
   are legacy: an index is a radio *slot*, not a channel identity, so reordering channels
   silently repoints it and replies can go out on the wrong channel. Names are re-resolved
   against the radio on every connect. See [docs/usage.md](docs/usage.md#use-channel-names-not-indices).
+- **Mention gating (default on):** on a **channel**, the bot only answers a message that
+  **starts with** its own short name, long name, or node id — `REDB weather`, `redb:
+  weather`, `@RED Box weather`, `!deadbeef weather` (case-insensitive, optional `@`, node
+  id with or without `!`). A mention mid-sentence (`ask REDB about the weather`) does not
+  count, and the mention is stripped before the agent sees the text. **Direct messages are
+  always answered** and never need a mention. Without this, an allowlisted channel means
+  replying to *every* message on it — including another bot's, which is how two bots
+  transmit at each other without end on shared, regulated spectrum. Disable with
+  `MESHTASTIC_REQUIRE_MENTION=0` (a loud warning is logged if you also widen the scope).
+  Note this is a mitigation, not an airtime limiter: there is still no rate limit or
+  cooldown. See [docs/usage.md](docs/usage.md#mention-gating-channels-only).
 - **Encryption:** replies to a DM go out **end-to-end (PKI)** to the sender; channel
   replies use the channel key. Opaque/undecryptable traffic is never answered.
 - **Reachability:** the adapter only sees messages addressed to the node it's connected
@@ -220,6 +231,9 @@ it via the service environment:
     environment.MESHTASTIC_REPLY_CHANNELS = "in.secure";  # DMs + that named channel
                                                           # (omit for DMs only)
     # environment.MESHTASTIC_REPLY_ALL = "true";     # or: reply on every channel
+    # On a channel the bot only answers messages starting with its own name/id
+    # (DMs are always answered). Turning this off risks a bot-to-bot reply loop:
+    # environment.MESHTASTIC_REQUIRE_MENTION = "0";
   };
 }
 ```

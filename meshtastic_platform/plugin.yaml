@@ -33,6 +33,22 @@ optional_env:
       'Primary'). Discover names with the meshtastic_list_channels tool.
     prompt: "Reply channel names (comma-separated, e.g. in.secure) or empty"
     password: false
+  - name: MESHTASTIC_REQUIRE_MENTION
+    description: >-
+      Require a CHANNEL message to be addressed to this node before the bot
+      replies. Default TRUE — set to 0/false/no (case-insensitive) to reply to
+      every message on an allowlisted channel. A message counts as addressed when
+      it STARTS WITH this node's short name, long name, or node id, e.g. 'REDB
+      weather', 'redb: weather', '@RED Box weather', '!deadbeef weather' — case-
+      insensitive, an optional leading '@', the node id with or without its '!',
+      and a ':'/',' or space after the name. A mention mid-sentence ('ask REDB
+      about the weather') does NOT count. The mention is stripped before the text
+      reaches the agent. DIRECT MESSAGES are always answered and never need a
+      mention. Turning this off is what lets two bots on one channel reply to each
+      other forever; this plugin has no rate limit or loop detection, and LoRa is
+      shared, regulated spectrum.
+    prompt: "Require channel messages to start with this node's name? (true/false)"
+    password: false
   - name: MESHTASTIC_HERMES_DB
     description: "Path to the node-interaction knowledge-base SQLite file (defaults under $HERMES_HOME)."
     prompt: "Knowledge-base DB path (or empty)"
