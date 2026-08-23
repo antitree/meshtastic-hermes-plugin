@@ -19,6 +19,7 @@ class and registration simply become no-ops), which keeps it lint/test-friendly.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
@@ -215,15 +216,57 @@ def _scope_is_broad(allowed_channels) -> str | None:
     return None
 
 
+def log_transmit_budget(*, log=None) -> dict:
+    """State the effective transmit budget at connect time; return it as a dict.
+
+    The rate limiter is the airtime loop breaker, and its settings are the operator's
+    only lever over how much this node may transmit. Silence about them would leave
+    "why did my reply not go out?" answerable only by reading the source, so the
+    limits are re-stated on every connect and reconnect — the same reasoning as
+    :func:`warn_if_reply_scope_is_unsafe`, and the same moment, because a config
+    change only takes effect on a restart.
+
+    Reads the config through :mod:`meshtastic_hermes.rate_limit`, so an invalid value
+    is reported as the conservative default that will actually be enforced rather
+    than as the bad string the operator typed.
+    """
+    from meshtastic_hermes.rate_limit import LimitConfig
+
+    log = log or logger
+    cfg = LimitConfig.from_env()
+    budget = {
+        "MESHTASTIC_MAX_SENDS_PER_MINUTE": cfg.max_sends_per_minute,
+        "MESHTASTIC_MAX_CHANNEL_SENDS_PER_MINUTE": cfg.max_channel_sends_per_minute,
+        "MESHTASTIC_MAX_DM_SENDS_PER_MINUTE": cfg.max_dm_sends_per_minute,
+        "MESHTASTIC_REPLY_COOLDOWN_SECONDS": cfg.reply_cooldown_seconds,
+    }
+    log.info(
+        "Meshtastic transmit budget (airtime loop breaker): %d sends/min global, "
+        "%d/min per channel, %d/min per DM peer, %gs cooldown between turns to the "
+        "same destination. Every transmitted PACKET costs one token, including each "
+        "part of a multi-part reply.",
+        cfg.max_sends_per_minute,
+        cfg.max_channel_sends_per_minute,
+        cfg.max_dm_sends_per_minute,
+        cfg.reply_cooldown_seconds,
+    )
+    return budget
+
+
 def warn_if_reply_scope_is_unsafe(allowed_channels, require_mention: bool, *, log=None) -> bool:
     """Log a prominent WARNING for the unsafe combination; return whether it fired.
 
     Unsafe means mention gating is OFF *and* the reply scope is broad. In that
     combination the bot transmits a reply for EVERY message it can decode on those
     channels — including messages from other bots, whose replies it will then
-    answer in turn. There is no rate limit, no cooldown and no bot-to-bot
-    detection in this plugin, so that is an unbounded transmission loop on a
-    shared, legally regulated RF medium.
+    answer in turn. There is no bot-to-bot detection in this plugin, so on a
+    shared, legally regulated RF medium that is a transmission loop.
+
+    Since remediation item 3 the loop is *bounded*: the transmit rate limiter
+    (:mod:`meshtastic_hermes.rate_limit`) caps how many packets per minute the loop
+    can emit and enforces a cooldown between turns. That is a loop BREAKER, not a
+    reason to run this configuration — it stops the runaway, it does not make a
+    reply-to-everything scope a good idea.
 
     Pure apart from logging, and called on every connect/reconnect so a reconnect
     after a config change re-states the risk rather than burying it in boot logs.
@@ -481,6 +524,7 @@ if _HAVE_GATEWAY:
             warn_if_reply_scope_is_unsafe(
                 self.allowed_channels, self.require_mention, log=logger
             )
+            log_transmit_budget(log=logger)
             if self._mgr.is_connected():
                 logger.info(
                     "Meshtastic adapter connected%s to %s (node %s, short=%s, long=%s, reply allowed_channels=%r)",
@@ -579,6 +623,7 @@ if _HAVE_GATEWAY:
         async def send(self, chat_id, content, reply_to=None, metadata=None):
             from meshtastic_hermes import gateway_bridge as gb
             from meshtastic_hermes import tools
+            from meshtastic_hermes.rate_limit import RATE_LIMITED
 
             target = gb.outbound_target(str(chat_id))
 
@@ -595,7 +640,7 @@ if _HAVE_GATEWAY:
                 parts[-1] = last + " …"
                 logger.warning("Meshtastic reply to %s truncated to %d parts", chat_id, _MAX_PARTS)
 
-            def _do_send(text: str) -> str:
+            def _do_send(text: str, *, continuation: bool) -> str:
                 return tools.send_text(
                     {
                         "text": text,
@@ -603,14 +648,40 @@ if _HAVE_GATEWAY:
                         "channel_index": target["channel_index"],
                         "pki": target["pki"],
                         "wait_ack": False,  # the gateway shouldn't block on radio acks
+                        # Parts 2..n of ONE answer are a continuation: each still costs
+                        # a rate-limiter token (each is a real packet on the air), but
+                        # they are not held behind the per-destination reply cooldown,
+                        # which spaces conversational turns rather than chunks.
+                        "_continuation": continuation,
                     }
                 )
 
             logger.debug("sending reply to chat_id=%s target=%s (%d part(s))", chat_id, target, len(parts))
             for idx, part in enumerate(parts):
-                raw = await self._loop.run_in_executor(None, _do_send, part)
+                raw = await self._loop.run_in_executor(
+                    None, functools.partial(_do_send, part, continuation=idx > 0)
+                )
                 data = json.loads(raw)
                 if data.get("error"):
+                    # The transmit limiter is enforced inside tools.send_text, which is
+                    # called once PER PART — so every packet that actually goes on the
+                    # air costs a token, and a long multi-part reply cannot slip a
+                    # whole flood through on the strength of one. When it refuses
+                    # mid-reply the remaining parts are dropped: on a regulated shared
+                    # medium, stopping is the correct failure mode.
+                    if data["error"] == RATE_LIMITED:
+                        logger.warning(
+                            "Meshtastic reply to %s rate limited after %d/%d part(s) "
+                            "(%s scope); retry_after_s=%s. This is the airtime loop "
+                            "breaker — see MESHTASTIC_MAX_SENDS_PER_MINUTE and "
+                            "MESHTASTIC_REPLY_COOLDOWN_SECONDS.",
+                            chat_id,
+                            idx,
+                            len(parts),
+                            data.get("scope", "?"),
+                            data.get("retry_after_s"),
+                        )
+                        return SendResult(success=False, error=RATE_LIMITED)
                     logger.warning("Meshtastic reply to %s failed: %s", chat_id, data["error"])
                     return SendResult(success=False, error=data["error"])
                 if idx < len(parts) - 1:

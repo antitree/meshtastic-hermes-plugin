@@ -45,9 +45,11 @@ These are design constraints, not preferences. The rig enforces them.
   directory, `assert_safe_remote_dir` *refuses* a `TESTRIG_REMOTE_DIR` that
   points inside `~/.hermes/profiles`, `~/.hermes/plugins`, or
   `~/.hermes/hermes-agent`.
-- **Zero airtime by default.** Transmitting is opt-in behind `--transmit`. This
-  codebase has **no rate limiting or cooldown**, so unattended transmit is
-  genuinely risky on a regulated medium.
+- **Zero airtime by default.** Transmitting is opt-in behind `--transmit`. The
+  plugin now has a [transmit rate limiter](usage.md#transmit-rate-limiting-the-loop-breaker),
+  but that is a per-minute *ceiling*, not a per-run budget: a rig that runs for
+  ten minutes may still emit ten minutes' worth of packets. Unattended transmit
+  stays opt-in.
 - **All output is scrubbed.** Node ids, node short/long names, hostnames and IPs
   are redacted from everything the rig prints, so rig output cannot leak homelab
   details into a commit, PR, or issue.
@@ -136,14 +138,16 @@ Sending would require one of two things, and both are ruled out:
 
 1. A second TCP connection to the node — forbidden, the gateway owns the single
    slot.
-2. Driving the user's live gateway to emit on a real channel — unsafe in a
-   codebase with no rate limiting.
+2. Driving the user's live gateway to emit on a real channel — which the rig has
+   no way to scope to a test channel.
 
 `--transmit` therefore currently reports `NOT_IMPLEMENTED` rather than sending.
 
-A plugin-side rate limit is **not planned** (see ROADMAP.md), so this check is
-not waiting on one. Implementing it needs a dedicated test channel on the radio
-plus a bound the rig enforces itself — a hard cap on sends per run — rather than
+The plugin-side rate limiter now exists, but it does not unblock this check.
+It bounds sends **per minute**, whereas the rig needs a bound **per run** — and
+it cannot supply the other missing piece either, which is a dedicated test
+channel on the radio. Implementing `--transmit` still needs both: that channel,
+plus a hard cap on sends per run that the rig enforces itself rather than
 relying on the plugin to throttle.
 
 ### What is NOT covered

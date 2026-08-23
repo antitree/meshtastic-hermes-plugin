@@ -306,10 +306,11 @@ working throughout.
 allowlist including public Primary index 0), you get a multi-line `WARNING` naming the loop
 risk. The adapter still starts — your config is honored — but the risk is stated plainly.
 
-> **Mention gating is not an airtime-safety layer.** This plugin still has **no rate limit,
-> no cooldown, and no bot-to-bot loop detection**. Gating substantially reduces the chance
-> of a runaway loop by requiring messages to be addressed to you, but it does not bound how
-> much you transmit. Treat it as one mitigation, not a solution.
+> **Mention gating is not an airtime-safety layer.** Gating decides *which messages get an
+> answer*; it does not bound *how much you transmit*, and there is still no bot-to-bot loop
+> detection. The bound comes from the [transmit rate limiter](#transmit-rate-limiting-the-loop-breaker),
+> which caps packets per minute and spaces consecutive turns. Treat gating as the control
+> and the limiter as the backstop — you want both.
 
 ### Gate 3 — sender allowlist (who may talk to the agent)
 
@@ -555,6 +556,125 @@ MESHTASTIC_TOOL_SEND_CHANNELS=in.secure    # names, resolved against the radio
 Error codes you may see: `broadcast_disabled`, `channel_required`,
 `no_allowed_channels`, `channel_not_allowed`, `primary_not_allowed`,
 `unknown_channel`, `dm_requires_pki`, `pki_requires_dest`, `invalid_channel`.
+
+## Transmit rate limiting (the loop breaker)
+
+Everything above decides **where** this node may transmit. This decides **how much**.
+
+LoRa is a shared, legally regulated medium: every packet you emit is airtime taken
+from everyone else in range. Nothing used to bound the volume. The adapter capped a
+*single* reply to five parts, but nothing capped the number of replies — so:
+
+- two bots on the same channel, each answering the other, transmit at each other
+  **forever**;
+- a model stuck in a tool loop can call `meshtastic_send_text` without limit;
+- a burst of inbound traffic produces a burst of outbound traffic, one-for-one.
+
+So there is a **process-wide transmit limiter**, enforced *before* anything reaches
+the radio. It is a loop **breaker**: it does not stop a bad exchange from starting,
+it stops one from running away.
+
+### One limiter, every outbound path
+
+The same limiter state covers all three ways this plugin transmits:
+
+| Path | What it is |
+|---|---|
+| `meshtastic_send_text` | the tool the model calls directly |
+| Gateway adapter replies | the agent answering a mesh message |
+| `python -m meshtastic_hermes bridge --send` | the standalone bridge harness |
+
+They share **one** budget, not one each. Spending it on tool calls leaves less for
+replies, which is the point: the limit is about total airtime, not per-feature
+fairness.
+
+### Every transmitted packet costs one token
+
+A Meshtastic text payload is tiny (~237 bytes), so a long reply is **chunked** into
+several packets. Each packet is its own transmission with its own airtime, so **each
+one consumes a token**. A five-part reply spends five.
+
+This is the detail that makes the limiter real. A limiter applied per *logical reply*
+would let one verbose answer emit five packets against a single token — five times the
+configured airtime, from a limiter that looked like it was working.
+
+If the budget runs out mid-reply, the remaining parts are **dropped** and the reply is
+reported as failed. On a regulated shared medium, stopping is the correct failure mode.
+
+### The knobs
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `MESHTASTIC_MAX_SENDS_PER_MINUTE` | `10` | Outbound **packets** per minute across every destination and every path. |
+| `MESHTASTIC_MAX_CHANNEL_SENDS_PER_MINUTE` | `5` | Broadcast packets per minute on any **one** channel index. |
+| `MESHTASTIC_MAX_DM_SENDS_PER_MINUTE` | `6` | Direct-message packets per minute to any **one** peer node id. |
+| `MESHTASTIC_REPLY_COOLDOWN_SECONDS` | `5` | Minimum seconds between consecutive conversational **turns** to the same destination. |
+
+Every applicable bucket must admit a packet before it goes out: a DM is checked
+against both the global and its per-peer bucket, a broadcast against both the global
+and its per-channel bucket. The windows are **sliding**, not fixed — a fixed window
+would let a burst straddle the boundary and emit twice the limit back-to-back, which
+is exactly the runaway being prevented. Time is measured **monotonically**, so an NTP
+step or a DST change never hands out free transmissions.
+
+**DM and channel buckets are independent.** Answering a flurry of direct messages does
+not consume a channel's broadcast allowance, and one chatty peer cannot exhaust
+another peer's. Only the global bucket is common to everything.
+
+**The cooldown spaces turns, not chunks.** Parts 2..n of a single reply are exempt from
+the cooldown — they still cost a token each, but they are not held behind it. Without
+that exemption any reply longer than one 200-byte packet would be undeliverable at any
+sensible cooldown setting.
+
+### Failing closed
+
+There is deliberately **no way to spell "unlimited"**. An unparseable value, a zero, or
+a negative number falls back to the conservative default and logs a warning:
+
+```
+MESHTASTIC_MAX_SENDS_PER_MINUTE='none' is not a number — falling back to the
+conservative default 10. Rate limits fail CLOSED: an unparseable limit is never
+treated as unlimited.
+```
+
+A typo in a rate limit must not turn into an unbounded transmitter. The effective
+budget is logged at every connect and reconnect, so what is actually enforced is
+visible in `journalctl` rather than inferred from what you meant to type.
+
+### What a refused send looks like
+
+From the **tool**, a structured JSON error — and nothing is transmitted:
+
+```json
+{
+  "error": "rate_limited",
+  "retry_after_s": 12.4,
+  "scope": "global",
+  "detail": "Global transmit limit reached: 10 sends per minute (MESHTASTIC_MAX_SENDS_PER_MINUTE)."
+}
+```
+
+`scope` is one of `global`, `channel`, `dm`, or `cooldown` — which budget stopped it.
+
+From the **gateway adapter**, a `SendResult(success=False, error="rate_limited")` plus a
+`WARNING` naming the scope, the retry delay, and how many parts made it out:
+
+```
+WARNING Meshtastic reply to !deadbeef rate limited after 3/5 part(s) (global scope);
+retry_after_s=12.4. This is the airtime loop breaker — see
+MESHTASTIC_MAX_SENDS_PER_MINUTE and MESHTASTIC_REPLY_COOLDOWN_SECONDS.
+```
+
+### Tuning
+
+The defaults assume an unattended agent on a mesh shared with other people, where the
+failure mode that matters is "the bot went quiet", not "the bot was slightly slow".
+
+Raise `MESHTASTIC_MAX_SENDS_PER_MINUTE` if legitimate long replies are being truncated
+— a five-part answer plus a couple of tool sends already reaches the default of 10 in
+one minute. Lower it, or raise `MESHTASTIC_REPLY_COOLDOWN_SECONDS`, on a busy or
+duty-cycle-constrained band. Watch for `rate_limited` in the journal before changing
+anything: it tells you which bucket is actually binding.
 
 ## The knowledge base
 

@@ -254,8 +254,18 @@ and [docs/usage.md](docs/usage.md#the-three-gates) for the worked detail.
   replying to *every* message on it — including another bot's, which is how two bots
   transmit at each other without end on shared, regulated spectrum. Disable with
   `MESHTASTIC_REQUIRE_MENTION=0` (a loud warning is logged if you also widen the scope).
-  Note this is a mitigation, not an airtime limiter: there is still no rate limit or
-  cooldown. See [docs/usage.md](docs/usage.md#gate-2--mention-gating-channels-only).
+  Note this decides *which* messages get an answer, not *how much* you transmit — that
+  bound is the [transmit rate limiter](docs/usage.md#transmit-rate-limiting-the-loop-breaker)
+  below. See [docs/usage.md](docs/usage.md#gate-2--mention-gating-channels-only).
+- **Transmit rate limiting (the loop breaker):** one process-wide limiter bounds how much
+  this node may transmit, across *every* outbound path — tool sends, gateway replies, and
+  bridge `--send` share one budget. Defaults: 10 packets/minute globally, 5/minute per
+  channel, 6/minute per DM peer, 5s between consecutive turns to one destination
+  (`MESHTASTIC_MAX_SENDS_PER_MINUTE` and friends). Every transmitted **packet** costs a
+  token, including each part of a chunked multi-part reply, because each part is real
+  airtime. Invalid values fail closed to the defaults — there is no "unlimited". Gating
+  keeps a bot-to-bot exchange from starting; this keeps one from running away.
+  See [docs/usage.md](docs/usage.md#transmit-rate-limiting-the-loop-breaker).
 - **Sender allowlist (gate 3):** enforced by Hermes' gateway, not this plugin. With
   neither `MESHTASTIC_ALLOWED_USERS` nor `MESHTASTIC_ALLOW_ALL_USERS` set it **denies
   everyone**, so a fresh install answers nothing until you list the node ids allowed to

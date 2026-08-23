@@ -12,8 +12,10 @@ surface a friendly install hint instead of crashing on a bare directory-drop ins
 from __future__ import annotations
 
 import json
+import logging
 import threading
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .connection import (
     ConnectTargetRejected,
@@ -23,6 +25,9 @@ from .connection import (
 )
 from .observer import get_observer
 from .policy import ToolSendRejected, validate_tool_send
+from .rate_limit import RateLimited, check_send
+
+logger = logging.getLogger(__name__)
 
 # Meshtastic portnum for plain text messages (portnums.proto TEXT_MESSAGE_APP).
 _TEXT_MESSAGE_APP = 1
@@ -39,7 +44,7 @@ def _err(message: str, **extra: Any) -> str:
 def _guard(fn: Callable[[dict], Any]) -> Callable[..., str]:
     """Wrap a handler so it always returns JSON and never raises."""
 
-    def wrapper(args: dict, **kwargs: Any) -> str:  # noqa: ARG001
+    def wrapper(args: dict, **kwargs: Any) -> str:
         try:
             return fn(args or {})
         except MeshtasticUnavailable as exc:
@@ -112,6 +117,35 @@ def send_text(args: dict) -> str:
 
     # (pki without dest_id is rejected by validate_tool_send above.)
     iface = mgr.iface
+
+    # Airtime budget. Checked AFTER policy authorizes the destination and after the
+    # interface is resolved (so an unreachable radio does not burn budget), but
+    # BEFORE any sendData. This is the single choke point every outbound path shares:
+    # direct tool calls, adapter replies (which call this function once per chunked
+    # part — so a multi-part reply spends one token per TRANSMITTED PACKET, not one
+    # per logical reply), and the bridge harness `--send`. See rate_limit.py.
+    # `_continuation` marks a later chunk of a reply already in flight. It still costs
+    # a token — chunks are real airtime — but is not held behind the per-destination
+    # cooldown, which spaces conversational TURNS, not the parts of one answer.
+    try:
+        check_send(
+            dest_id=dest_id,
+            channel_index=None if dest_id else channel_index,
+            continuation=bool(args.get("_continuation", False)),
+        )
+    except RateLimited as exc:
+        logger.warning(
+            "Transmit refused by rate limiter (%s scope): %s retry_after_s=%s",
+            exc.scope,
+            exc,
+            exc.retry_after_s,
+        )
+        return _err(
+            exc.code,
+            retry_after_s=exc.retry_after_s,
+            scope=exc.scope,
+            detail=str(exc),
+        )
 
     # We send everything via sendData(portNum=TEXT_MESSAGE_APP) — identical on-air to
     # sendText — because only sendData exposes onResponseAckPermitted, needed to have

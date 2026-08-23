@@ -61,6 +61,27 @@ optional_env:
   - name: MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY
     description: "Set to true to allow meshtastic_send_text on the PRIMARY channel, whose pre-shared key is public on a default radio. Required IN ADDITION to MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST and a matching MESHTASTIC_TOOL_SEND_CHANNELS entry. Default: false."
     secret: false
+  # Transmit rate limiting — the airtime LOOP BREAKER. LoRa is a shared, legally
+  # regulated medium, and nothing else bounds how much this node emits: the adapter
+  # caps one reply to five parts, but repeated messages or a model in a tool loop
+  # can transmit indefinitely, and two bots on one channel will answer each other
+  # forever. One shared limiter covers every outbound path (tool sends, adapter
+  # replies, bridge --send), and every transmitted PACKET costs one token — each
+  # part of a multi-part reply included, since each part is real airtime.
+  # All four fail CLOSED: an unparseable or non-positive value falls back to the
+  # conservative default. There is deliberately no way to spell "unlimited".
+  - name: MESHTASTIC_MAX_SENDS_PER_MINUTE
+    description: "Maximum outbound PACKETS per minute across every destination and every path (tool sends, gateway replies, bridge --send). Each part of a multi-part reply counts separately. Default: 10. Invalid or non-positive values fall back to the default — there is no 'unlimited'."
+    secret: false
+  - name: MESHTASTIC_MAX_CHANNEL_SENDS_PER_MINUTE
+    description: "Maximum broadcast packets per minute on any ONE channel index. Independent of the DM budget, so answering DMs never consumes a channel's broadcast allowance. Default: 5. Invalid values fall back to the default."
+    secret: false
+  - name: MESHTASTIC_MAX_DM_SENDS_PER_MINUTE
+    description: "Maximum direct-message packets per minute to any ONE peer node id, so a single chatty peer cannot consume another's allowance. Default: 6. Invalid values fall back to the default."
+    secret: false
+  - name: MESHTASTIC_REPLY_COOLDOWN_SECONDS
+    description: "Minimum seconds between two consecutive conversational turns to the same destination. This is what breaks a tight bot-to-bot ping-pong before the per-minute buckets even fill. Parts 2..n of one multi-part reply are exempt from the cooldown (they still cost a token each). Default: 5. Invalid values fall back to the default."
+    secret: false
   - name: MESHTASTIC_HERMES_DB
     description: "Path to the SQLite knowledge-base file. Defaults to $HERMES_HOME/meshtastic_kb.sqlite. Optional."
     secret: false
