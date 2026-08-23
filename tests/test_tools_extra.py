@@ -265,7 +265,11 @@ _NODE = {
 }
 
 
-def test_list_nodes_summarizes_and_limits(iface):
+def test_list_nodes_summarizes_and_limits(iface, monkeypatch):
+    # `lat` moved behind MESHTASTIC_EXPOSE_LOCATION in remediation item 4. This test
+    # is about SUMMARIZING and LIMITING, so it opts in and keeps asserting the field;
+    # the default-redacted behavior is asserted in test_privacy_gates.py.
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_LOCATION", "true")
     iface.nodes = {f"!{i:08x}": _NODE for i in range(5)}
     data = _data(tools.list_nodes({"limit": 3}))
     assert data["count"] == 3
@@ -276,8 +280,11 @@ def test_list_nodes_summarizes_and_limits(iface):
     assert first["hops_away"] == 2
 
 
-def test_list_nodes_with_an_empty_node_db(iface):
+def test_list_nodes_with_an_empty_node_db(iface, monkeypatch):
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_LOCATION", "true")
     iface.nodes = None
+    # With location exposed there is no redaction annotation, so the payload is
+    # exactly the empty result it always was.
     assert _data(tools.list_nodes({})) == {"count": 0, "nodes": []}
 
 
@@ -352,7 +359,10 @@ def test_list_channels_with_no_channels(iface):
     assert _data(tools.list_channels({})) == {"count": 0, "channels": []}
 
 
-def test_device_metrics_reports_our_own_node(iface):
+def test_device_metrics_reports_our_own_node(iface, monkeypatch):
+    # `altitude` moved behind MESHTASTIC_EXPOSE_LOCATION (item 4); this test is about
+    # the metrics fields, so it opts in rather than dropping the assertion.
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_LOCATION", "true")
     iface.nodes = {"!aabbccdd": _NODE}
     data = _data(tools.device_metrics({}))
     assert data["node_id"] == "!aabbccdd"
@@ -380,7 +390,11 @@ def test_device_metrics_without_a_known_node_id(iface):
 # ----------------------------------------------------------------------
 
 
-def test_recent_messages_reads_the_observer_buffer():
+def test_recent_messages_reads_the_observer_buffer(monkeypatch):
+    # Bodies moved behind MESHTASTIC_EXPOSE_RECENT_TEXT (item 4). This test is about
+    # the tool READING THE BUFFER at all, so it opts in; the default-redacted
+    # behavior is asserted in test_privacy_gates.py.
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_RECENT_TEXT", "true")
     from meshtastic_hermes.observer import get_observer
 
     obs = get_observer()
@@ -402,7 +416,11 @@ def test_kb_summary_is_valid_json_offline():
     assert data["db_path"] == ":memory:"
 
 
-def test_kb_nodes_and_sorting():
+def test_kb_nodes_and_sorting(monkeypatch):
+    # The detailed KB views are gated behind MESHTASTIC_EXPOSE_TRAFFIC_METADATA
+    # (item 4). This test is about SORTING and LIMITING, so it opts in; the gate
+    # itself is asserted in test_privacy_gates.py.
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_TRAFFIC_METADATA", "true")
     from meshtastic_hermes.observer import get_observer
 
     kb = get_observer().kb
@@ -437,7 +455,11 @@ def test_kb_neighbors_requires_a_node_id():
     assert "node_id is required" in _data(tools.kb_neighbors({}))["error"]
 
 
-def test_kb_neighbors_infers_direct_contacts():
+def test_kb_neighbors_infers_direct_contacts(monkeypatch):
+    # Neighbor inference is gated behind MESHTASTIC_EXPOSE_TRAFFIC_METADATA (item 4).
+    # This test is about the INFERENCE, so it opts in; the gate is asserted in
+    # test_privacy_gates.py.
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_TRAFFIC_METADATA", "true")
     from meshtastic_hermes.observer import get_observer
 
     kb = get_observer().kb

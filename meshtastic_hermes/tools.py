@@ -25,6 +25,15 @@ from .connection import (
 )
 from .observer import get_observer
 from .policy import ToolSendRejected, validate_tool_send
+from .privacy import (
+    EXPOSE_TRAFFIC_METADATA_ENV,
+    RECENT_TEXT_REDACTED_NOTE,
+    TRAFFIC_METADATA_REDACTED_NOTE,
+    expose_traffic_metadata,
+    location_note,
+    redact_location,
+    redact_messages,
+)
 from .rate_limit import RateLimited, check_send
 
 logger = logging.getLogger(__name__)
@@ -203,8 +212,21 @@ def send_text(args: dict) -> str:
 
 @_guard
 def recent_messages(args: dict) -> str:
+    """Recent decoded text — REDACTED to metadata unless plaintext exposure is on.
+
+    The observer's buffer keeps the full bodies (the gateway needs them to answer a
+    message); the gate is here, on the way out to the model. Redacted rows still
+    carry sender/recipient/channel/timestamp plus a length and short hash, so "three
+    messages arrived on channel 1 just now" remains answerable without disclosing
+    what anyone said.
+    """
     limit = int(args.get("limit", 20))
-    return _ok({"messages": get_observer().recent_messages(limit)})
+    rows, redacted = redact_messages(get_observer().recent_messages(limit))
+    payload: dict[str, Any] = {"count": len(rows), "messages": rows}
+    if redacted:
+        payload["text_redacted"] = True
+        payload["note"] = RECENT_TEXT_REDACTED_NOTE
+    return _ok(payload)
 
 
 # ----------------------------------------------------------------------
@@ -216,7 +238,7 @@ def _node_summary(node_id: str, node: dict[str, Any]) -> dict[str, Any]:
     user = node.get("user") or {}
     pos = node.get("position") or {}
     metrics = node.get("deviceMetrics") or {}
-    return {
+    summary = {
         "id": node_id,
         "short_name": user.get("shortName"),
         "long_name": user.get("longName"),
@@ -229,6 +251,11 @@ def _node_summary(node_id: str, node: dict[str, Any]) -> dict[str, Any]:
         "lat": pos.get("latitude"),
         "lon": pos.get("longitude"),
     }
+    # Coordinates are dropped on the way OUT, not read selectively above, so this
+    # cannot be defeated by a future field being added to the dict without the
+    # author remembering the gate. redact_location() is the same function the KB
+    # path uses — one gate, both sources.
+    return redact_location(summary)
 
 
 @_guard
@@ -236,7 +263,7 @@ def list_nodes(args: dict) -> str:
     limit = int(args.get("limit", 50))
     nodes = get_manager().iface.nodes or {}
     out = [_node_summary(nid, n) for nid, n in list(nodes.items())[:limit]]
-    return _ok({"count": len(out), "nodes": out})
+    return _ok(location_note({"count": len(out), "nodes": out}))
 
 
 @_guard
@@ -249,7 +276,7 @@ def node_info(args: dict) -> str:
     node = nodes.get(node_id)
     if node is None:
         return _err(f"Node {node_id} not found in the radio's node DB.", node_id=node_id)
-    return _ok(_node_summary(node_id, node))
+    return _ok(location_note(_node_summary(node_id, node)))
 
 
 @_guard
@@ -282,18 +309,25 @@ def device_metrics(args: dict) -> str:
     node = nodes.get(node_id, {}) if node_id else {}
     metrics = node.get("deviceMetrics") or {}
     pos = node.get("position") or {}
+    # This node's OWN position. Still gated: "where is the gateway" locates the
+    # operator just as precisely as any peer, and the answer travels wherever the
+    # model's output travels.
     return _ok(
-        {
-            "node_id": node_id,
-            "battery_level": metrics.get("batteryLevel"),
-            "voltage": metrics.get("voltage"),
-            "channel_utilization": metrics.get("channelUtilization"),
-            "air_util_tx": metrics.get("airUtilTx"),
-            "uptime_seconds": metrics.get("uptimeSeconds"),
-            "lat": pos.get("latitude"),
-            "lon": pos.get("longitude"),
-            "altitude": pos.get("altitude"),
-        }
+        location_note(
+            redact_location(
+                {
+                    "node_id": node_id,
+                    "battery_level": metrics.get("batteryLevel"),
+                    "voltage": metrics.get("voltage"),
+                    "channel_utilization": metrics.get("channelUtilization"),
+                    "air_util_tx": metrics.get("airUtilTx"),
+                    "uptime_seconds": metrics.get("uptimeSeconds"),
+                    "lat": pos.get("latitude"),
+                    "lon": pos.get("longitude"),
+                    "altitude": pos.get("altitude"),
+                }
+            )
+        )
     )
 
 
@@ -302,31 +336,91 @@ def device_metrics(args: dict) -> str:
 # ----------------------------------------------------------------------
 
 
+def _metadata_gated(payload: dict) -> str:
+    """Refuse a detailed reconnaissance view, returning the counts instead.
+
+    Not a bare error: the summary still answers "is the mesh busy, how many nodes
+    have I heard", which is operationally useful and names nobody. What is withheld
+    is the per-node, per-packet, per-relationship detail that turns that into a
+    social graph of the people on the mesh.
+    """
+    return _ok(
+        {
+            **payload,
+            "traffic_metadata_redacted": True,
+            "note": TRAFFIC_METADATA_REDACTED_NOTE,
+            "required_env": EXPOSE_TRAFFIC_METADATA_ENV,
+        }
+    )
+
+
 @_guard
 def kb_summary(args: dict) -> str:
-    return _ok(_kb().summary())
+    """Aggregate counts. Available by default — it names no node and locates nobody.
+
+    Except ``top_talkers``, which DOES name specific nodes and ranks them by how
+    much they transmit. That is the first step of the same reconnaissance the
+    detailed tools do, so it rides the traffic-metadata gate; the counts around it
+    do not.
+    """
+    summary = _kb().summary()
+    if not expose_traffic_metadata():
+        summary = {k: v for k, v in summary.items() if k != "top_talkers"}
+        summary["top_talkers_redacted"] = True
+    return _ok(summary)
 
 
 @_guard
 def kb_nodes(args: dict) -> str:
+    """Per-node KB rows — gated, and location-redacted even when ungated.
+
+    Two gates apply independently, because the KB is the SECOND path to the same
+    sensitive fields: the ``nodes`` table carries its own ``lat``/``lon`` columns,
+    populated separately from the radio's live node DB. Enabling traffic metadata
+    unlocks the rows; it does NOT unlock coordinates — only
+    MESHTASTIC_EXPOSE_LOCATION does that, on this path exactly as on the live one.
+    """
+    if not expose_traffic_metadata():
+        return _metadata_gated({"node_count": _kb().summary().get("nodes", 0)})
     limit = int(args.get("limit", 50))
     sort = args.get("sort", "last_seen")
-    return _ok({"nodes": _kb().nodes(limit=limit, sort=sort)})
+    rows = redact_location(_kb().nodes(limit=limit, sort=sort))
+    return _ok(location_note({"count": len(rows), "nodes": rows}))
 
 
 @_guard
 def kb_interactions(args: dict) -> str:
+    """Per-packet interaction records — who addressed whom, when, on which channel.
+
+    Individually dull, collectively a timeline of everyone in radio range. Gated.
+    """
     limit = int(args.get("limit", 100))
     node_id = args.get("node_id")
     since = args.get("since")
-    rows = _kb().interactions(node_id=node_id, since=since, limit=limit)
+    if not expose_traffic_metadata():
+        rows = _kb().interactions(node_id=node_id, since=since, limit=limit)
+        # The COUNT is not the disclosure; the records are. Returning it keeps
+        # "has this node been active since X" answerable.
+        return _metadata_gated({"count": len(rows), "interactions": []})
+    rows = redact_location(_kb().interactions(node_id=node_id, since=since, limit=limit))
     return _ok({"count": len(rows), "interactions": rows})
 
 
 @_guard
 def kb_neighbors(args: dict) -> str:
+    """Inferred direct contacts of a node — the sharpest reconnaissance view. Gated.
+
+    This is an explicit social graph: it answers "who does this person talk to",
+    ranked, from traffic nobody consented to have analyzed.
+    """
     node_id = args.get("node_id")
     if not node_id:
         return _err("node_id is required.")
     limit = int(args.get("limit", 50))
-    return _ok({"node_id": node_id, "neighbors": _kb().neighbors(node_id, limit=limit)})
+    if not expose_traffic_metadata():
+        peers = _kb().neighbors(node_id, limit=limit)
+        return _metadata_gated(
+            {"node_id": node_id, "neighbor_count": len(peers), "neighbors": []}
+        )
+    rows = redact_location(_kb().neighbors(node_id, limit=limit))
+    return _ok({"node_id": node_id, "count": len(rows), "neighbors": rows})

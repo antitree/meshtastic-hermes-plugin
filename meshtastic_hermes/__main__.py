@@ -242,6 +242,30 @@ def _enable_readline():
     return readline, histfile
 
 
+def _watch_body(msg: dict) -> str:
+    """Render one watched message's body for the console.
+
+    This harness dispatches the REGISTERED tool handlers, so it sees exactly what
+    the model sees — including the recent-text redaction. When bodies are withheld
+    (`MESHTASTIC_EXPOSE_RECENT_TEXT` off, the default) print the metadata the tool
+    did return rather than a bare `None`, which would read as "an empty message
+    arrived" instead of "a message arrived and you are not being shown it".
+    """
+    if msg.get("text_redacted"):
+        return f"<redacted len={msg.get('text_len')} sha256={msg.get('text_sha256')}>"
+    return repr(msg.get("text"))
+
+
+def _watch_key(msg: dict) -> tuple:
+    """Dedupe key for the watch loop.
+
+    Uses the content HASH rather than the body, because the body is None on every
+    redacted row — keying on it would collapse two different messages from the same
+    sender in the same second into one and silently drop the second.
+    """
+    return (msg["ts"], msg.get("from"), msg.get("text"), msg.get("text_sha256"))
+
+
 def _watch_messages(ctx: FakeContext, seconds: float) -> None:
     """Poll the recent-messages buffer and print NEW text messages as they arrive."""
     recent = ctx.tools["meshtastic_recent_messages"]["handler"]
@@ -249,20 +273,20 @@ def _watch_messages(ctx: FakeContext, seconds: float) -> None:
     def snapshot():
         return json.loads(recent({"limit": 1000})).get("messages", [])
 
-    seen = {(m["ts"], m.get("from"), m.get("text")) for m in snapshot()}
+    seen = {_watch_key(m) for m in snapshot()}
     print(f"Watching for incoming messages for {int(seconds)}s (Ctrl-C to stop)...", file=sys.stderr)
     end = time.time() + seconds
     try:
         while time.time() < end:
             for m in reversed(snapshot()):  # oldest-first
-                key = (m["ts"], m.get("from"), m.get("text"))
+                key = _watch_key(m)
                 if key not in seen:
                     seen.add(key)
                     to = m.get("to")
                     # A directed message (to a specific node) is a DM; "^all" is a
                     # channel broadcast.
                     kind = "DM" if (to and to != "^all") else f"ch{m.get('channel') or 0}"
-                    print(f"  [{kind}] {m.get('from')}: {m.get('text')!r}")
+                    print(f"  [{kind}] {m.get('from')}: {_watch_body(m)}")
             time.sleep(1)
     except KeyboardInterrupt:
         pass

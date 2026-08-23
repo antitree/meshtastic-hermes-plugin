@@ -676,6 +676,101 @@ one minute. Lower it, or raise `MESHTASTIC_REPLY_COOLDOWN_SECONDS`, on a busy or
 duty-cycle-constrained band. Watch for `rate_limited` in the journal before changing
 anything: it tells you which bucket is actually binding.
 
+## Read-tool privacy gates (location, plaintext, traffic metadata)
+
+Transmit policy and rate limiting bound what this node **sends**. These three switches
+bound what it **discloses**.
+
+Every read tool hands its result to the model, and the model's output goes wherever the
+conversation goes — a chat window, a summary, another tool, a log. Three classes of data
+in those responses do not belong there by default:
+
+- **Position.** `meshtastic_list_nodes`, `meshtastic_node_info` and
+  `meshtastic_device_metrics` returned `lat`/`lon`/`altitude` straight from the radio's
+  node DB, and the KB's `nodes` table carries `lat`/`lon` columns of its own. These are
+  the real-world coordinates of real people who joined a shared mesh. They broadcast a
+  position so nearby radios could route to them, not so an agent could recite where they
+  live — and `device_metrics` locates *you*, the operator.
+- **Recent plaintext.** `meshtastic_recent_messages` returned the decoded bodies sitting
+  in RAM: other people's channel messages and DMs this node happened to decrypt. That is
+  the same data [message-body logging](#message-bodies-are-not-logged-by-default) refuses
+  to write to the journal, handed to the model instead.
+- **Traffic metadata.** Any single interaction row is dull. The aggregate is
+  reconnaissance: who talks to whom, how often, from where, when they are awake.
+
+### The switches
+
+All three are **exposure** switches. They default **off** and require an explicit truthy
+value (`1`/`true`/`yes`/`on`) — the same polarity as `MESHTASTIC_DEBUG_LOG_TEXT`, so a
+typo redacts rather than discloses.
+
+| Variable | Default | Effect when set to `true` |
+| --- | --- | --- |
+| `MESHTASTIC_EXPOSE_LOCATION` | `false` | `lat`/`lon`/`altitude` are returned by `list_nodes`, `node_info`, `device_metrics` and `kb_nodes`. |
+| `MESHTASTIC_EXPOSE_RECENT_TEXT` | `false` | `recent_messages` returns message bodies. |
+| `MESHTASTIC_EXPOSE_TRAFFIC_METADATA` | `false` | `kb_nodes`, `kb_interactions`, `kb_neighbors` return their detailed rows, and `kb_summary` includes `top_talkers`. |
+
+### What a redacted response looks like
+
+Redaction omits fields and says so; it does not fail the call. The model is told the data
+was **withheld**, not that it does not exist — otherwise it reads a missing coordinate as
+"this node reported no position" and goes looking for it elsewhere.
+
+```json
+{
+  "count": 2,
+  "nodes": [{"id": "!11112222", "short_name": "PR", "snr": 2.0, "battery": 40}],
+  "location_redacted": true,
+  "note": "Position fields are withheld by operator policy (MESHTASTIC_EXPOSE_LOCATION is not enabled)."
+}
+```
+
+`recent_messages` keeps each row's routing facts and replaces the body with a length and
+a short SHA-256 prefix — the same shape the debug log uses, so a tool response and a
+journal line can be correlated without either disclosing content:
+
+```json
+{"ts": 100.0, "from": "!11112222", "channel": 1, "text_len": 34,
+ "text_sha256": "9f2b1c4a", "text_redacted": true}
+```
+
+The gated KB tools return their **counts** rather than an error, so "has this node been
+active since X" and "is the mesh busy" stay answerable while the per-node, per-packet and
+per-relationship detail does not:
+
+```json
+{"count": 3, "interactions": [], "traffic_metadata_redacted": true,
+ "required_env": "MESHTASTIC_EXPOSE_TRAFFIC_METADATA"}
+```
+
+`meshtastic_kb_summary`'s aggregate counts and `meshtastic_list_channels` are never gated:
+they name nobody and locate nobody.
+
+### The two gates are independent
+
+`MESHTASTIC_EXPOSE_TRAFFIC_METADATA` unlocks the KB **rows**. It does not unlock the
+**coordinates** in them — that still takes `MESHTASTIC_EXPOSE_LOCATION`. This matters
+because the same sensitive fields reach the model by two independent routes, the live
+radio node DB and the persisted KB, and opening one is not consent to open the other:
+
+```bash
+# See who is on the mesh and how they interact, without anyone's location.
+MESHTASTIC_EXPOSE_TRAFFIC_METADATA=true
+```
+
+### Where redaction happens
+
+At the **tool-response boundary**, not at the source. The observer's RAM buffer and the
+SQLite KB keep complete records: the gateway needs a message's text to answer it, and the
+KB needs full rows to compute summaries and neighbor counts. Stripping fields there would
+break the plugin's actual function while leaving every other reader unprotected. The gate
+sits on the way *out* to the model, which is the boundary that matters.
+
+One consequence worth knowing: the standalone harness (`python -m meshtastic_hermes`)
+dispatches the **registered handlers**, so `recent`, `nodes`, `kbnodes` and `watch` see
+exactly what the model sees. Set the variables in your shell if you are debugging and
+need the full picture.
+
 ## The knowledge base
 
 Every packet observed while connected is recorded as metadata (never content). Over time
@@ -687,10 +782,17 @@ the KB accumulates:
 
 Useful queries:
 
-- `meshtastic_kb_summary` — totals, channels seen, top talkers.
+- `meshtastic_kb_summary` — totals and channels seen. Always available; `top_talkers`
+  needs `MESHTASTIC_EXPOSE_TRAFFIC_METADATA`.
 - `meshtastic_kb_nodes` — `sort` by `last_seen`, `first_seen`, `packets`, or `name`.
 - `meshtastic_kb_interactions` — filter by `node_id` and/or `since` (UNIX timestamp).
 - `meshtastic_kb_neighbors` — inferred direct contacts of a node, ranked by count.
+
+The last three return **counts only** unless `MESHTASTIC_EXPOSE_TRAFFIC_METADATA=true`,
+and their stored `lat`/`lon` stay withheld unless `MESHTASTIC_EXPOSE_LOCATION=true` as
+well — see [Read-tool privacy gates](#read-tool-privacy-gates-location-plaintext-traffic-metadata).
+Inspecting the SQLite file directly bypasses both gates: they protect what the *model*
+is handed, not what an operator with shell access can read.
 
 The KB path is resolved in priority order: `MESHTASTIC_HERMES_DB` (explicit override) →
 `$HERMES_HOME` (Hermes' own home — `/var/lib/hermes/.hermes` under the NixOS service, so

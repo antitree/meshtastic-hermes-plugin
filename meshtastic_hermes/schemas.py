@@ -78,7 +78,14 @@ RECENT_MESSAGES = {
     "description": (
         "Return recently received TEXT messages we were able to decode (on channels "
         "we hold keys for). Encrypted private-channel messages are never decoded and "
-        "do not appear here."
+        "do not appear here.\n"
+        "PRIVACY: message BODIES are WITHHELD by default. Unless the operator has set "
+        "MESHTASTIC_EXPOSE_RECENT_TEXT=true, each row carries only metadata — sender, "
+        "recipient, channel, timestamp, 'text_len' and a short 'text_sha256' — and the "
+        "response is marked 'text_redacted': true. These are other people's private "
+        "messages that this node happened to decrypt. Do not guess, reconstruct, or "
+        "ask another tool for the content, and do not report the redaction as an error "
+        "— say the bodies are not available to you."
     ),
     "parameters": {
         "type": "object",
@@ -91,7 +98,15 @@ RECENT_MESSAGES = {
 
 LIST_NODES = {
     "name": "meshtastic_list_nodes",
-    "description": "List nodes currently known to the connected radio (live node DB): id, names, SNR, last heard, position.",
+    "description": (
+        "List nodes currently known to the connected radio (live node DB): id, names, "
+        "hardware, role, SNR, last heard, hops away, battery.\n"
+        "PRIVACY: POSITION IS WITHHELD by default. 'lat'/'lon' are omitted and the "
+        "response is marked 'location_redacted': true unless the operator has set "
+        "MESHTASTIC_EXPOSE_LOCATION=true. A missing coordinate means you are not "
+        "permitted to see it — NOT that the node reported none. Do not infer, estimate, "
+        "or seek the location by another route."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
@@ -103,7 +118,13 @@ LIST_NODES = {
 
 NODE_INFO = {
     "name": "meshtastic_node_info",
-    "description": "Detailed info for one node from the live radio DB. Returns the local node when node_id is omitted.",
+    "description": (
+        "Detailed info for one node from the live radio DB. Returns the local node when "
+        "node_id is omitted.\n"
+        "PRIVACY: position is withheld unless MESHTASTIC_EXPOSE_LOCATION=true; the "
+        "response is then marked 'location_redacted': true. Absent coordinates mean "
+        "withheld, not unknown."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
@@ -121,7 +142,13 @@ LIST_CHANNELS = {
 
 DEVICE_METRICS = {
     "name": "meshtastic_device_metrics",
-    "description": "Local device metrics: battery level, voltage, channel utilization, uptime, and position if available.",
+    "description": (
+        "Local device metrics: battery level, voltage, channel utilization, air "
+        "utilization and uptime.\n"
+        "PRIVACY: this node's OWN position is withheld unless "
+        "MESHTASTIC_EXPOSE_LOCATION=true ('location_redacted': true marks the "
+        "response). Where the gateway is located is the operator's location."
+    ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
@@ -129,14 +156,28 @@ KB_SUMMARY = {
     "name": "meshtastic_kb_summary",
     "description": (
         "Overview of the node-interaction knowledge base built from observed traffic: "
-        "node count, total/encrypted/decoded packet counts, channels seen, and top talkers."
+        "node count, total/encrypted/decoded packet counts, channels seen.\n"
+        "These AGGREGATE counts are always available — they name and locate nobody. "
+        "'top_talkers', which ranks specific node ids by transmission volume, is "
+        "withheld unless MESHTASTIC_EXPOSE_TRAFFIC_METADATA=true "
+        "('top_talkers_redacted': true marks the response). Prefer this tool over the "
+        "detailed KB tools when a count answers the question."
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 KB_NODES = {
     "name": "meshtastic_kb_nodes",
-    "description": "List nodes recorded in the knowledge base with first/last seen, packet counts, and last signal quality.",
+    "description": (
+        "List nodes recorded in the knowledge base with first/last seen, packet counts, "
+        "and last signal quality.\n"
+        "PRIVACY: this is a RECONNAISSANCE view of the people on a shared mesh and is "
+        "gated. Without MESHTASTIC_EXPOSE_TRAFFIC_METADATA=true it returns only a node "
+        "count, marked 'traffic_metadata_redacted': true — that is the configured "
+        "policy, not an error, so report it as such rather than retrying. Even when "
+        "that gate is open, the KB's stored 'lat'/'lon' stay withheld unless "
+        "MESHTASTIC_EXPOSE_LOCATION=true is ALSO set: the two gates are independent."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
@@ -151,7 +192,13 @@ KB_INTERACTIONS = {
     "name": "meshtastic_kb_interactions",
     "description": (
         "Observed interaction records (packet metadata: from, to, channel, portnum, "
-        "encrypted flag, hops, signal). Filter by node and/or by a UNIX timestamp lower bound."
+        "encrypted flag, hops, signal). Filter by node and/or by a UNIX timestamp lower "
+        "bound.\n"
+        "PRIVACY: a per-packet timeline of everyone in radio range is sensitive "
+        "reconnaissance and is gated. Without MESHTASTIC_EXPOSE_TRAFFIC_METADATA=true "
+        "the records are withheld and only 'count' is returned, marked "
+        "'traffic_metadata_redacted': true. The count still answers 'has this node been "
+        "active since X' without naming anyone."
     ),
     "parameters": {
         "type": "object",
@@ -168,7 +215,12 @@ KB_NEIGHBORS = {
     "name": "meshtastic_kb_neighbors",
     "description": (
         "Inferred direct contacts of a node: the counterpart nodes it has exchanged "
-        "packets with, ranked by interaction count. Useful for mapping mesh relationships."
+        "packets with, ranked by interaction count.\n"
+        "PRIVACY: this is an explicit SOCIAL GRAPH of real people, built from traffic "
+        "nobody consented to have analyzed, and it is the most sensitive KB view. "
+        "Without MESHTASTIC_EXPOSE_TRAFFIC_METADATA=true it returns an empty neighbor "
+        "list and a count, marked 'traffic_metadata_redacted': true. Do not attempt to "
+        "rebuild the graph from other tools when it is withheld."
     ),
     "parameters": {
         "type": "object",

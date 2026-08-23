@@ -81,7 +81,11 @@ def test_repl_kb_friendly_verb_offline():
     assert '"nodes"' in repl_command(ctx, "kb")
 
 
-def test_repl_kb_query_verbs_offline():
+def test_repl_kb_query_verbs_offline(monkeypatch):
+    # This test is about VERB ROUTING (does "kbnodes packets" reach kb_nodes?), not
+    # about the privacy gate. The detailed KB tools return counts only by default
+    # since remediation item 4, so opt in explicitly to keep asserting the routing.
+    monkeypatch.setenv("MESHTASTIC_EXPOSE_TRAFFIC_METADATA", "true")
     ctx = build_registry()
     # neighbors requires a node_id
     assert "usage: neighbors" in repl_command(ctx, "neighbors")
