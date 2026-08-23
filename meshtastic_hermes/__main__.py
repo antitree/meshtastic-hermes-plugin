@@ -231,7 +231,7 @@ def _enable_readline():
         return None, None
     try:
         import readline
-    except ImportError:
+    except ImportError:  # pragma: no cover - readline is absent only on some Windows builds
         return None, None
     histfile = os.path.expanduser("~/.meshtastic_hermes_history")
     try:
@@ -399,7 +399,7 @@ def _cmd_bridge(ctx: FakeContext, args) -> int:
         pass
     try:
         pub.unsubscribe(on_rx, "meshtastic.receive")
-    except Exception:
+    except Exception:  # pragma: no cover - teardown guard; the listener is always present here
         pass
     mgr.disconnect()
     return 0
