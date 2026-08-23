@@ -136,34 +136,13 @@ jobs:
           PY
 
       - name: Verify versions agree across every file that declares one
-        run: |
-          python - <<'PY'
-          import re, pathlib, yaml
-          try:
-              import tomllib  # 3.11+
-          except ModuleNotFoundError:
-              # 3.10 has no tomllib; the version line is simple enough to read
-              # directly rather than pull in a tomli dependency just for CI.
-              tomllib = None
-          text = pathlib.Path("pyproject.toml").read_text()
-          if tomllib is not None:
-              pyproject_version = tomllib.loads(text)["project"]["version"]
-          else:
-              pyproject_version = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M).group(1)
-
-          import meshtastic_hermes, meshtastic_platform
-          versions = {
-              "pyproject.toml": pyproject_version,
-              "meshtastic_hermes/plugin.yaml": str(
-                  yaml.safe_load(pathlib.Path("meshtastic_hermes/plugin.yaml").read_text())["version"]),
-              "meshtastic_platform/plugin.yaml": str(
-                  yaml.safe_load(pathlib.Path("meshtastic_platform/plugin.yaml").read_text())["version"]),
-              "meshtastic_hermes.__version__": meshtastic_hermes.__version__,
-              "meshtastic_platform.__version__": meshtastic_platform.__version__,
-          }
-          assert len(set(versions.values())) == 1, f"version mismatch: {versions}"
-          print("version consistent:", pyproject_version)
-          PY
+        # This step used to inline its own list of the five declaring files.
+        # It now defers to scripts/bump_version.py --check, which reads the
+        # same VERSION_FILES tuple that the bump script rewrites and both
+        # release workflows re-check — one list, checked in four places,
+        # rather than four lists that can disagree. Adding a sixth
+        # declaration means editing scripts/bump_version.py and nothing else.
+        run: python scripts/bump_version.py --check
 
       - name: Byte-compile every shipped module
         # Catches a syntax error in code no test imports, before it reaches users.
