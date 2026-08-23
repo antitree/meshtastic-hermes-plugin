@@ -41,3 +41,6 @@ result-*
 *.swo
 .idea/
 .vscode/
+
+# Live test rig config (host-specific; never commit)
+.testrig.env
