@@ -54,8 +54,27 @@ optional_env:
     prompt: "Knowledge-base DB path (or empty)"
     password: false
   - name: MESHTASTIC_DEBUG
-    description: "Set to 1 to log inbound messages and reply/skip decisions to the gateway journal."
+    description: >-
+      Set to 1 to log inbound message METADATA and reply/skip decisions to the
+      gateway journal — message type (DM/channel), channel, sender node id, the
+      routing decision, and the body's length plus a short SHA-256 prefix. Message
+      BODIES are never logged by this switch: mesh traffic is encrypted in transit
+      (channel PSK, or end-to-end PKI for a DM) and this node decrypts it, so
+      writing the plaintext to the journal would leak someone's private message
+      into logs that outlive the packet. Turn bodies on separately and
+      deliberately with MESHTASTIC_DEBUG_LOG_TEXT.
     prompt: "Enable debug logging? (1/true)"
+    password: false
+  - name: MESHTASTIC_DEBUG_LOG_TEXT
+    description: >-
+      Also write decrypted message BODIES into the debug log (1/true/yes/on).
+      Default OFF, and it requires an explicit truthy value — an unset var, an
+      empty string, or a typo all leave bodies redacted. Needs MESHTASTIC_DEBUG as
+      well, since bodies only appear on DEBUG-level lines. Enable only for
+      short-lived local troubleshooting on a mesh whose traffic you are entitled
+      to read: it puts plaintext of channel and end-to-end-encrypted direct
+      messages into the gateway journal.
+    prompt: "Log message bodies too? (true/false, default false)"
     password: false
   - name: MESHTASTIC_ALLOWED_USERS
     description: "Comma-separated node ids allowed to talk to the agent, e.g. '!a696579c,!0aca4a9c'. Empty + allow-all off = nobody (deny by default)."

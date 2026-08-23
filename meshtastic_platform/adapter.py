@@ -19,6 +19,7 @@ class and registration simply become no-ops), which keeps it lint/test-friendly.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -152,6 +153,50 @@ def _require_mention_from_env() -> bool:
     if raw is None:
         return True
     return raw.strip().lower() not in _FALSEY
+
+
+# Truthy spellings accepted for MESHTASTIC_DEBUG_LOG_TEXT, matching the set
+# MESHTASTIC_DEBUG itself uses.
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _log_text_from_env() -> bool:
+    """Whether debug logs may contain inbound message BODIES.
+
+    Defaults to FALSE, and the polarity is deliberately the opposite of
+    :func:`_require_mention_from_env`: there, only an explicit falsey value turns
+    the safety off; here, only an explicit truthy value turns the *disclosure* on.
+    Both rules fail the same way on a typo — towards the safe state.
+
+    Mesh traffic is private: a channel message is encrypted with that channel's
+    PSK, and a direct message is end-to-end (PKI) encrypted to this node's
+    keypair. The node decrypts it for us, so logging the plaintext writes someone
+    else's private message into the gateway journal, where it long outlives the
+    packet. ``MESHTASTIC_DEBUG`` alone must therefore never imply payload logging.
+    """
+    return os.getenv("MESHTASTIC_DEBUG_LOG_TEXT", "").strip().lower() in _TRUTHY
+
+
+def debug_text_for_log(text) -> str:
+    """Render a message body for a debug log line.
+
+    Returns the raw text only when ``MESHTASTIC_DEBUG_LOG_TEXT`` is explicitly
+    enabled. Otherwise returns redacted metadata — the character length plus a
+    short SHA-256 prefix, which is enough to tell two messages apart, to spot a
+    duplicate or a retransmit, and to correlate a log line with a report, without
+    disclosing what was said.
+
+    The returned value is preformatted (already ``repr``'d when raw), so callers
+    must interpolate it with ``%s``, never ``%r``.
+    """
+    if text is None:
+        return "text=<none>"
+    if not isinstance(text, str):  # defensive: a malformed packet field
+        text = str(text)
+    if _log_text_from_env():
+        return f"text={text!r}"
+    digest = hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:8]
+    return f"text_len={len(text)} text_sha256={digest}"
 
 
 def _scope_is_broad(allowed_channels) -> str | None:
@@ -490,13 +535,16 @@ if _HAVE_GATEWAY:
                         reason = "skip (not addressed to us)"
                     else:
                         inbound = gated
+                # The routing context (type/channel/sender/decision) is what makes
+                # a reply-or-skip diagnosable; the body is not, and is redacted
+                # unless MESHTASTIC_DEBUG_LOG_TEXT is explicitly enabled.
                 logger.debug(
-                    "inbound %s ch=%s from=%s -> %s text=%r",
+                    "inbound %s ch=%s from=%s -> %s %s",
                     "DM" if inbound["is_dm"] else "channel",
                     inbound["channel"],
                     inbound["from_id"],
                     "REPLY" if decision else reason,
-                    inbound["text"],
+                    debug_text_for_log(inbound["text"]),
                 )
                 if not decision:
                     return

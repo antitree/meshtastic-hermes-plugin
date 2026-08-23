@@ -366,9 +366,42 @@ What to look for:
 ```
 INFO  meshtastic_platform.adapter: Meshtastic adapter connected to 192.0.2.10 (node !0aca4a9c, reply allowed_channels=ChannelSpec(names=('in.secure',), indices=frozenset()))
 INFO  meshtastic_platform.adapter: Meshtastic reply channels resolved: in.secure -> 1
-DEBUG meshtastic_platform.adapter: inbound channel ch=1 from=!a696579c -> REPLY text='ping'
+DEBUG meshtastic_platform.adapter: inbound channel ch=1 from=!a696579c -> REPLY text_len=4 text_sha256=758d61f2
 INFO  meshtastic_platform.adapter: Meshtastic reply sent to ch:1
 ```
+
+#### Message bodies are not logged by default
+
+`MESHTASTIC_DEBUG=1` logs everything needed to diagnose a routing decision — message type
+(`DM`/`channel`), channel, sender node id, the `REPLY`/`skip` decision — but **not what the
+message said**. The body appears as `text_len=<chars> text_sha256=<8 hex>` instead, which is
+enough to tell two messages apart, spot a duplicate or a retransmit, and match a log line
+against a report, without writing the plaintext down.
+
+That is deliberate. Mesh traffic is encrypted in transit — a channel message with that
+channel's PSK, a direct message end-to-end (PKI) to this node's keypair — and this node
+decrypts it. Logging the plaintext would copy someone's private message into the gateway
+journal, where it is retained, rotated, and shipped long after the packet is gone, and where
+it is readable by anyone who can read the journal. Verbose logging should not be the same
+decision as disclosing payloads.
+
+When you genuinely need the body, turn it on separately:
+
+| Env                                | Effect                                                                          |
+| ---------------------------------- | ------------------------------------------------------------------------------- |
+| _unset_ **(default)**              | Bodies redacted to `text_len=… text_sha256=…`                                    |
+| `MESHTASTIC_DEBUG_LOG_TEXT="true"` | Bodies logged in full as `text='…'` (`1`/`true`/`yes`/`on`)                       |
+
+Only an explicit `1`, `true`, `yes`, or `on` (case-insensitive) turns bodies on. Anything
+else — an unset var, an empty string, or a typo like `ture` — leaves them **redacted**. This
+is the mirror image of [mention gating](#gate-2--mention-gating-channels-only): there, only
+an explicit falsey value disables a safety; here, only an explicit truthy value enables a
+disclosure. Both fail towards the safe state.
+
+`MESHTASTIC_DEBUG_LOG_TEXT` has no effect on its own — bodies only appear on `DEBUG` lines,
+so `MESHTASTIC_DEBUG=1` is needed as well. Prefer enabling it for a short, local
+troubleshooting session on a mesh whose traffic you are entitled to read, then removing it
+and rotating the logs it produced.
 
 - No "connected" line → the adapter isn't running (check `MESHTASTIC_HOST` and that
   `meshtastic-platform` is in `plugins.enabled`).
