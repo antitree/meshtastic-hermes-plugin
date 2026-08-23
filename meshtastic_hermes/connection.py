@@ -251,18 +251,56 @@ class ConnectionManager:
         return self._iface
 
     def my_node_id(self) -> str | None:
+        return self.local_node_identity()["node_id"]
+
+    def local_node_identity(self) -> dict[str, Any]:
+        """Return the connected radio's own Meshtastic identity.
+
+        Meshtastic's TCPInterface exposes the canonical node number via
+        ``myInfo.my_node_num``. Human-readable names live in the node DB under
+        that node id, so this combines both sources and tolerates either one
+        being temporarily absent during startup.
+        """
+        identity: dict[str, Any] = {
+            "node_id": None,
+            "true_node_id": None,
+            "node_num": None,
+            "short_name": None,
+            "long_name": None,
+        }
         if self._iface is None:
-            return None
+            return identity
+
         info = getattr(self._iface, "myInfo", None)
-        if info is None:
-            return None
-        return f"!{info.my_node_num:08x}"
+        node_num = getattr(info, "my_node_num", None) if info is not None else None
+        node_id = None
+        if node_num is not None:
+            try:
+                node_num = int(node_num)
+                node_id = f"!{node_num:08x}"
+            except Exception:
+                node_id = str(node_num)
+
+        nodes = getattr(self._iface, "nodes", None) or {}
+        node = nodes.get(node_id, {}) if node_id else {}
+        user = node.get("user") or {} if isinstance(node, dict) else {}
+
+        identity.update(
+            {
+                "node_id": node_id,
+                "true_node_id": node_id,
+                "node_num": node_num,
+                "short_name": user.get("shortName"),
+                "long_name": user.get("longName"),
+            }
+        )
+        return identity
 
     def status(self) -> dict[str, Any]:
         return {
             "connected": self.is_connected(),
             "host": self._host,
-            "node_id": self.my_node_id(),
+            **self.local_node_identity(),
         }
 
 

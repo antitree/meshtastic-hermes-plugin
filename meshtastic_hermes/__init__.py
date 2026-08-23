@@ -82,6 +82,60 @@ def _handle_slash(raw_args: str) -> str:
 
 
 # ----------------------------------------------------------------------
+# Status helpers
+# ----------------------------------------------------------------------
+
+
+def _local_status() -> dict:
+    status = get_manager().status()
+    return {**status, "source": "process_local"}
+
+
+def _gateway_runtime_status() -> dict | None:
+    """Read the live Hermes gateway's Meshtastic platform state, when available.
+
+    `hermes meshtastic status` runs in a short-lived CLI process. The radio link,
+    however, is owned by the long-running gateway process, so the CLI process-local
+    ConnectionManager normally reports disconnected even while the gateway is
+    connected. Prefer Hermes' runtime status file when it belongs to a live process.
+    """
+    try:
+        from gateway.status import read_runtime_status, runtime_status_pid_is_live
+    except Exception:
+        return None
+
+    record = read_runtime_status()
+    if not record or not runtime_status_pid_is_live(record):
+        return None
+    platforms = record.get("platforms") or {}
+    platform = platforms.get("meshtastic")
+    if not isinstance(platform, dict):
+        return None
+    state = platform.get("state")
+    return {
+        "connected": state == "connected",
+        "host": os.environ.get("MESHTASTIC_HOST"),
+        "node_id": platform.get("node_id"),
+        "true_node_id": platform.get("true_node_id") or platform.get("node_id"),
+        "node_num": platform.get("node_num"),
+        "short_name": platform.get("short_name"),
+        "long_name": platform.get("long_name"),
+        "source": "gateway_runtime",
+        "gateway_state": record.get("gateway_state"),
+        "platform_state": state,
+        "error_code": platform.get("error_code"),
+        "error_message": platform.get("error_message"),
+        "updated_at": platform.get("updated_at"),
+        "identity_updated_at": platform.get("identity_updated_at"),
+        "writer_pid": platform.get("writer_pid"),
+    }
+
+
+def _status_for_cli() -> dict:
+    return _gateway_runtime_status() or _local_status()
+
+
+# ----------------------------------------------------------------------
 # CLI command: hermes meshtastic <status|kb-summary>
 # ----------------------------------------------------------------------
 
@@ -91,7 +145,7 @@ def _cli_handler(args):
     if sub == "kb-summary":
         print(json.dumps(get_observer().kb.summary(), indent=2, default=str))
     elif sub == "status":
-        print(json.dumps(get_manager().status(), indent=2, default=str))
+        print(json.dumps(_status_for_cli(), indent=2, default=str))
     else:
         print("Usage: hermes meshtastic <status|kb-summary>")
 

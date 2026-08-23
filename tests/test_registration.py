@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+import types
 
 import meshtastic_hermes as pkg
 from meshtastic_hermes import connection
@@ -158,9 +160,69 @@ def test_cli_kb_summary(capsys):
     assert "packets" in json.loads(capsys.readouterr().out)
 
 
-def test_cli_status(capsys):
+def test_cli_status(monkeypatch, capsys):
+    monkeypatch.setattr(pkg, "_gateway_runtime_status", lambda: None)
     pkg._cli_handler(argparse.Namespace(meshtastic_command="status"))
-    assert json.loads(capsys.readouterr().out)["connected"] is False
+    data = json.loads(capsys.readouterr().out)
+    assert data["connected"] is False
+    assert data["source"] == "process_local"
+
+
+def test_cli_status_prefers_live_gateway_runtime(monkeypatch, capsys):
+    monkeypatch.setenv("MESHTASTIC_HOST", "10.2.2.60")
+
+    gateway_pkg = types.ModuleType("gateway")
+    status_mod = types.ModuleType("gateway.status")
+
+    def read_runtime_status():
+        return {
+            "gateway_state": "running",
+            "platforms": {
+                "meshtastic": {
+                    "state": "connected",
+                    "node_id": "!aabbccdd",
+                    "true_node_id": "!aabbccdd",
+                    "node_num": 0xAABBCCDD,
+                    "short_name": "MESH",
+                    "long_name": "Meshy Gateway",
+                    "error_code": None,
+                    "error_message": None,
+                    "updated_at": "2026-08-23T15:04:58Z",
+                    "identity_updated_at": "2026-08-23T15:04:59Z",
+                    "writer_pid": 9820,
+                }
+            },
+        }
+
+    status_mod.read_runtime_status = read_runtime_status
+    status_mod.runtime_status_pid_is_live = lambda record: True
+    monkeypatch.setitem(sys.modules, "gateway", gateway_pkg)
+    monkeypatch.setitem(sys.modules, "gateway.status", status_mod)
+
+    pkg._cli_handler(argparse.Namespace(meshtastic_command="status"))
+    data = json.loads(capsys.readouterr().out)
+    assert data["connected"] is True
+    assert data["host"] == "10.2.2.60"
+    assert data["source"] == "gateway_runtime"
+    assert data["node_id"] == "!aabbccdd"
+    assert data["true_node_id"] == "!aabbccdd"
+    assert data["node_num"] == 0xAABBCCDD
+    assert data["short_name"] == "MESH"
+    assert data["long_name"] == "Meshy Gateway"
+    assert data["identity_updated_at"] == "2026-08-23T15:04:59Z"
+    assert data["gateway_state"] == "running"
+    assert data["platform_state"] == "connected"
+
+
+def test_cli_status_ignores_stale_gateway_runtime(monkeypatch):
+    gateway_pkg = types.ModuleType("gateway")
+    status_mod = types.ModuleType("gateway.status")
+    status_mod.read_runtime_status = lambda: {"platforms": {"meshtastic": {"state": "connected"}}}
+    status_mod.runtime_status_pid_is_live = lambda record: False
+    monkeypatch.setitem(sys.modules, "gateway", gateway_pkg)
+    monkeypatch.setitem(sys.modules, "gateway.status", status_mod)
+
+    assert pkg._gateway_runtime_status() is None
 
 
 def test_cli_usage_for_an_unknown_subcommand(capsys):

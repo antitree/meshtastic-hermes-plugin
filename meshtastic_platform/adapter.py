@@ -107,6 +107,47 @@ def _allowed_channels_from_env():
     return gb.parse_channel_spec(os.getenv("MESHTASTIC_REPLY_CHANNELS"))
 
 
+def _manager_status_connected(status) -> bool:
+    """Return whether ConnectionManager.connect() produced a usable radio link."""
+    return bool(isinstance(status, dict) and status.get("connected"))
+
+
+def _persist_local_node_identity(identity: dict) -> None:
+    """Merge Meshtastic local-node identity into Hermes runtime status.
+
+    Hermes' public write_runtime_status API does not currently accept plugin-owned
+    platform fields. Preserve its schema and merge only our known identity keys into
+    the profile-local gateway_state.json so status readers can distinguish the
+    gateway's own node from remote nodes.
+    """
+    keys = ("node_id", "true_node_id", "node_num", "short_name", "long_name")
+    data = {key: identity.get(key) for key in keys if identity.get(key) is not None}
+    if not data:
+        return
+
+    try:
+        import json
+        from datetime import datetime, timezone
+
+        home = os.getenv("HERMES_HOME")
+        if not home:
+            return
+        path = Path(home) / "gateway_state.json"
+        payload = {}
+        if path.exists():
+            try:
+                payload = json.loads(path.read_text())
+            except Exception:
+                payload = {}
+        platforms = payload.setdefault("platforms", {})
+        platform = platforms.setdefault("meshtastic", {})
+        platform.update(data)
+        platform["identity_updated_at"] = datetime.now(timezone.utc).isoformat()
+        path.write_text(json.dumps(payload, separators=(",", ":")))
+    except Exception:
+        logger.debug("Could not persist Meshtastic local node identity", exc_info=True)
+
+
 if _HAVE_GATEWAY:
 
     class MeshtasticAdapter(BasePlatformAdapter):
@@ -150,18 +191,36 @@ if _HAVE_GATEWAY:
 
             self._mgr = get_manager()
             # TCPInterface construction is blocking — keep it off the event loop.
-            await self._loop.run_in_executor(None, self._mgr.connect, self.host)
+            status = await self._loop.run_in_executor(None, self._mgr.connect, self.host)
+            if not _manager_status_connected(status):
+                self._set_fatal_error(
+                    "connect_failed",
+                    f"Meshtastic radio is not connected to {self.host}",
+                    retryable=True,
+                )
+                logger.warning(
+                    "Meshtastic adapter could not reach %s yet; gateway reconnect "
+                    "watcher will retry (is another client holding the node's single "
+                    "TCP slot?); reply allowed_channels=%r",
+                    self.host,
+                    self.allowed_channels,
+                )
+                return False
 
             from pubsub import pub
 
             pub.subscribe(self._on_rx, "meshtastic.receive")
             self._mark_connected()
+            identity = self._mgr.local_node_identity()
+            _persist_local_node_identity(identity)
             if self._mgr.is_connected():
                 logger.info(
-                    "Meshtastic adapter connected%s to %s (node %s, reply allowed_channels=%r)",
+                    "Meshtastic adapter connected%s to %s (node %s, short=%s, long=%s, reply allowed_channels=%r)",
                     " [reconnect]" if is_reconnect else "",
                     self.host,
-                    self._mgr.my_node_id(),
+                    identity.get("node_id"),
+                    identity.get("short_name"),
+                    identity.get("long_name"),
                     self.allowed_channels,
                 )
             else:

@@ -24,6 +24,9 @@ class _FakeIface:
         self.port = portNumber
         self.closed = False
         self.myInfo = types.SimpleNamespace(my_node_num=0xAABBCCDD)
+        self.nodes = {
+            "!aabbccdd": {"user": {"shortName": "MESH", "longName": "Meshy Gateway"}}
+        }
 
     def close(self):
         self.closed = True
@@ -63,7 +66,15 @@ def mgr():
 
 def test_connect_opens_interface_and_reports_status(mgr, fake_radio):
     status = mgr.connect("10.0.0.7", 4403)
-    assert status == {"connected": True, "host": "10.0.0.7", "node_id": "!aabbccdd"}
+    assert status == {
+        "connected": True,
+        "host": "10.0.0.7",
+        "node_id": "!aabbccdd",
+        "true_node_id": "!aabbccdd",
+        "node_num": 0xAABBCCDD,
+        "short_name": "MESH",
+        "long_name": "Meshy Gateway",
+    }
     assert len(fake_radio) == 1
     assert fake_radio[0].host == "10.0.0.7"
 
@@ -107,13 +118,33 @@ def test_connect_reraises_when_the_radio_library_is_missing(mgr, monkeypatch):
 
 
 def test_status_when_never_connected(mgr):
-    assert mgr.status() == {"connected": False, "host": None, "node_id": None}
+    assert mgr.status() == {
+        "connected": False,
+        "host": None,
+        "node_id": None,
+        "true_node_id": None,
+        "node_num": None,
+        "short_name": None,
+        "long_name": None,
+    }
 
 
 def test_my_node_id_without_myinfo(mgr, fake_radio):
     mgr.connect("10.0.0.7")
     mgr._iface.myInfo = None
     assert mgr.my_node_id() is None
+
+
+def test_local_node_identity_tolerates_missing_names(mgr, fake_radio):
+    mgr.connect("10.0.0.7")
+    mgr._iface.nodes = {}
+    assert mgr.local_node_identity() == {
+        "node_id": "!aabbccdd",
+        "true_node_id": "!aabbccdd",
+        "node_num": 0xAABBCCDD,
+        "short_name": None,
+        "long_name": None,
+    }
 
 
 def test_iface_property_raises_when_disconnected(mgr):

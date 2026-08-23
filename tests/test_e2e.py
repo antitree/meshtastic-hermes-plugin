@@ -357,4 +357,8 @@ def test_e2e_status_reports_the_live_link(radio):
         "connected": True,
         "host": "radio.test",
         "node_id": MY_ID,
+        "true_node_id": MY_ID,
+        "node_num": int(MY_ID[1:], 16),
+        "short_name": None,
+        "long_name": None,
     }

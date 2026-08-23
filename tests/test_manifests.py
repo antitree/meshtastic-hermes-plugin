@@ -264,6 +264,7 @@ def test_register_without_the_gateway_runtime_still_bundles_skills(monkeypatch, 
     from meshtastic_platform import adapter
 
     caplog.set_level(logging.WARNING)
+    monkeypatch.setattr(adapter, "_HAVE_GATEWAY", False)
     captured: list = []
 
     class Ctx:

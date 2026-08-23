@@ -245,7 +245,7 @@ class _FakeManager:
 
     def connect(self, host, port=4403):
         self.connect_calls.append((host, port))
-        return {"connected": self._connected, "host": host, "node_id": self._node_id}
+        return {"connected": self._connected, "host": host, **self.local_node_identity()}
 
     def disconnect(self):
         self.disconnect_calls += 1
@@ -256,6 +256,15 @@ class _FakeManager:
 
     def my_node_id(self):
         return self._node_id
+
+    def local_node_identity(self):
+        return {
+            "node_id": self._node_id,
+            "true_node_id": self._node_id,
+            "node_num": int(self._node_id[1:], 16),
+            "short_name": "MESH",
+            "long_name": "Meshy Gateway",
+        }
 
 
 def _patch_manager(monkeypatch, mgr):
@@ -278,15 +287,17 @@ def test_connect_success_subscribes_and_marks_connected(adapter_mod, monkeypatch
     assert pub.getDefaultTopicMgr().getTopic("meshtastic.receive").hasListener(a._on_rx)
 
 
-def test_connect_returns_true_even_when_radio_unreachable(adapter_mod, monkeypatch):
-    """The supervisor retries in the background, so connect() must not report failure."""
+def test_connect_returns_false_when_radio_unreachable(adapter_mod, monkeypatch):
+    """Hermes should queue the platform for retry until the radio link is usable."""
     mgr = _FakeManager(connected=False)
     _patch_manager(monkeypatch, mgr)
     a = _make(adapter_mod, monkeypatch, host="10.1.2.3")
 
-    assert asyncio.run(a.connect()) is True
-    assert a.state == "connected"
-    assert a.fatal is None
+    assert asyncio.run(a.connect()) is False
+    assert a.state != "connected"
+    assert a.fatal is not None
+    assert a.fatal["retryable"] is True
+    assert a.fatal["code"] == "connect_failed"
 
 
 def test_disconnect_unsubscribes_and_stops_manager(adapter_mod, monkeypatch):

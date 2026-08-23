@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from meshtastic_hermes import gateway_bridge as gb
 from meshtastic_platform import adapter
 
@@ -44,6 +46,38 @@ def test_allowed_channels_from_env(monkeypatch):
     monkeypatch.delenv("MESHTASTIC_REPLY_ALL", raising=False)
     monkeypatch.delenv("MESHTASTIC_REPLY_CHANNELS", raising=False)
     assert adapter._allowed_channels_from_env() is None  # DMs only
+
+
+def test_manager_status_connected_requires_connected_true():
+    assert adapter._manager_status_connected({"connected": True}) is True
+    assert adapter._manager_status_connected({"connected": False}) is False
+    assert adapter._manager_status_connected({"host": "10.2.2.60"}) is False
+    assert adapter._manager_status_connected(None) is False
+
+
+def test_persist_local_node_identity_merges_gateway_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    state = tmp_path / "gateway_state.json"
+    state.write_text(json.dumps({"gateway_state": "running", "platforms": {"meshtastic": {"state": "connected"}}}))
+
+    adapter._persist_local_node_identity(
+        {
+            "node_id": "!aabbccdd",
+            "true_node_id": "!aabbccdd",
+            "node_num": 0xAABBCCDD,
+            "short_name": "MESH",
+            "long_name": "Meshy Gateway",
+        }
+    )
+
+    platform = json.loads(state.read_text())["platforms"]["meshtastic"]
+    assert platform["state"] == "connected"
+    assert platform["node_id"] == "!aabbccdd"
+    assert platform["true_node_id"] == "!aabbccdd"
+    assert platform["node_num"] == 0xAABBCCDD
+    assert platform["short_name"] == "MESH"
+    assert platform["long_name"] == "Meshy Gateway"
+    assert platform["identity_updated_at"]
 
 
 def test_register_bundles_skill():
