@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "ruff>=0.4"]
+dev = ["pytest>=7.0", "ruff>=0.4", "pytest-cov>=4.0"]
 
 # Hermes discovers pip-installed plugins via this entry point group.
 # - meshtastic_hermes: the tools/KB plugin (register lives in its __init__).
@@ -46,3 +46,21 @@ target-version = "py310"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["meshtastic_hermes", "meshtastic_platform"]
+
+[tool.coverage.report]
+# NOTE: deliberately no `fail_under`. Coverage is measured and reported, but it
+# never fails the build — a coverage gate pushes people toward hollow tests on
+# error branches to hit a number. The uncovered lines that remain are documented
+# in ROADMAP.md; anything genuinely unreachable is marked `pragma: no cover`
+# with the reason inline.
+exclude_also = [
+  # The module entry point: `python -m meshtastic_hermes` is covered by an
+  # actual subprocess test, but the guard line itself never runs under pytest.
+  "if __name__ == .__main__.:",
+  # Import-time sys.path shim for directory-drop installs — runs before pytest
+  # can observe it, and is exercised implicitly by every cross-package import.
+  "if _REPO_ROOT not in sys.path:",
+]

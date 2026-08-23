@@ -88,7 +88,7 @@ class Observer:
             if text is None and isinstance(payload, (bytes, bytearray)):
                 try:
                     text = payload.decode("utf-8", "replace")
-                except Exception:
+                except Exception:  # pragma: no cover - errors="replace" cannot raise
                     text = None
             with self._lock:
                 self._recent.append(
