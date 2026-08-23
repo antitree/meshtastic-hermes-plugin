@@ -132,8 +132,22 @@ def _allowed_channels_from_env():
 
 
 def _manager_status_connected(status) -> bool:
-    """Return whether ConnectionManager.connect() produced a usable radio link."""
+    """Return whether ConnectionManager.connect() produced a usable radio link.
+
+    Deliberately still keyed off the boolean: `connecting` is NOT a usable link, so
+    the adapter must not report healthy while the supervisor is still retrying.
+    """
     return bool(isinstance(status, dict) and status.get("connected"))
+
+
+def _manager_status_state(status) -> str:
+    """The three-state connection state from a manager status dict."""
+    if not isinstance(status, dict):
+        return "disconnected"
+    state = status.get("state")
+    if state in {"connected", "connecting", "disconnected"}:
+        return state
+    return "connected" if status.get("connected") else "disconnected"
 
 
 def _persist_local_node_identity(identity: dict) -> None:
@@ -241,16 +255,23 @@ if _HAVE_GATEWAY:
             # TCPInterface construction is blocking — keep it off the event loop.
             status = await self._loop.run_in_executor(None, self._mgr.connect, self.host)
             if not _manager_status_connected(status):
+                state = _manager_status_state(status)
+                # `connecting` is not usable yet, but it is not a dead configuration
+                # either — say so, so the log doesn't send anyone debugging a node
+                # that is merely still booting.
                 self._set_fatal_error(
                     "connect_failed",
-                    f"Meshtastic radio is not connected to {self.host}",
+                    f"Meshtastic radio is {state} (not connected) to {self.host}",
                     retryable=True,
                 )
                 logger.warning(
-                    "Meshtastic adapter could not reach %s yet; gateway reconnect "
-                    "watcher will retry (is another client holding the node's single "
-                    "TCP slot?); reply allowed_channels=%r",
+                    "Meshtastic adapter could not reach %s yet (state=%s); the "
+                    "connection supervisor and the gateway reconnect watcher will "
+                    "retry (a booting node refusing TCP is expected; is another "
+                    "client holding the node's single TCP slot?); "
+                    "reply allowed_channels=%r",
                     self.host,
+                    state,
                     self.allowed_channels,
                 )
                 return False

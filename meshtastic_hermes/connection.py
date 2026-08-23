@@ -22,6 +22,51 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TCP_PORT = 4403
 
+# Three-state connection reporting ------------------------------------------------
+# A bare "connected: false" cannot tell a node that is still booting apart from a
+# configuration that will never work. These are the three states we report:
+#
+#   connected     — a live, working interface.
+#   connecting    — the supervisor is running and still retrying at full rate; the
+#                   consecutive-failure threshold has not been reached. A TCP
+#                   "connection refused" while a node boots lands here, not in
+#                   disconnected: it is expected, not an error.
+#   disconnected  — we are not usefully trying any more: the user explicitly
+#                   disconnected, we never tried, or N consecutive attempts failed
+#                   and the supervisor has dropped to the slow retry cadence.
+STATE_CONNECTED = "connected"
+STATE_CONNECTING = "connecting"
+STATE_DISCONNECTED = "disconnected"
+
+DEFAULT_FAILURE_THRESHOLD = 10
+DEFAULT_SLOW_RETRY_SECONDS = 300.0
+
+
+def _env_number(name: str, default, cast):
+    """Read a positive numeric env var, falling back to *default* when unusable."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = cast(raw.strip())
+    except (TypeError, ValueError):
+        logger.warning("%s=%r is not a number — using default %s", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("%s=%r must be > 0 — using default %s", name, raw, default)
+        return default
+    return value
+
+
+def failure_threshold() -> int:
+    """Consecutive failed connect attempts before the state becomes `disconnected`."""
+    return _env_number("MESHTASTIC_FAILURE_THRESHOLD", DEFAULT_FAILURE_THRESHOLD, int)
+
+
+def slow_retry_seconds() -> float:
+    """Retry interval used once the failure threshold has been exceeded."""
+    return _env_number("MESHTASTIC_SLOW_RETRY_SECONDS", DEFAULT_SLOW_RETRY_SECONDS, float)
+
 
 def enable_debug_logging() -> bool:
     """If MESHTASTIC_DEBUG is truthy, route this plugin's loggers to stderr at DEBUG.
@@ -110,6 +155,11 @@ class ConnectionManager:
         # them from a safe thread (not the library's reader thread) to cancel their
         # heartbeat timers, which otherwise keep writing to dead sockets (BrokenPipe).
         self._stale_ifaces: list[Any] = []
+        # Three-state bookkeeping. Guarded by _lock (the supervisor thread writes
+        # these while status() reads them from a caller's thread).
+        self._consecutive_failures = 0
+        self._slow_retry = False
+        self._hard_error: str | None = None
 
     # ------------------------------------------------------------------
 
@@ -122,16 +172,64 @@ class ConnectionManager:
         self._port = port
         self._want_connected = True
         self._stop.clear()
+        # A fresh connect() is a fresh attempt: clear any previous slow-retry/hard
+        # state so an explicit reconnect starts back in `connecting`.
+        with self._lock:
+            self._consecutive_failures = 0
+            self._slow_retry = False
+            self._hard_error = None
         try:
             self._open()
-        except MeshtasticUnavailable:
+        except MeshtasticUnavailable as exc:
+            # HARD failure: the radio library itself is missing. No amount of retrying
+            # fixes that, so report `disconnected` rather than sitting in `connecting`.
+            with self._lock:
+                self._hard_error = str(exc)
             raise  # radio lib genuinely missing — no point supervising
         except Exception as exc:
-            # Node unreachable at startup: don't fail hard, let the supervisor retry
-            # (keeps "connected if MESHTASTIC_HOST is set" true once it comes up).
-            logger.warning("Initial Meshtastic connect to %s failed: %s (supervisor will retry)", host, exc)
+            # SOFT failure (connection refused, timeout, DNS not resolvable yet): the
+            # node may simply be booting. Don't fail hard, let the supervisor retry.
+            self._record_failure()
+            logger.warning(
+                "Initial Meshtastic connect to %s failed: %s (supervisor will retry)", host, exc
+            )
+        else:
+            self._record_success()
         self._ensure_supervisor()
         return self.status()
+
+    # -- failure accounting -------------------------------------------------
+
+    def _record_success(self) -> None:
+        """A successful open: reset the consecutive-failure counter and cadence."""
+        with self._lock:
+            was_slow = self._slow_retry
+            self._consecutive_failures = 0
+            self._slow_retry = False
+            self._hard_error = None
+        if was_slow:
+            logger.info("Meshtastic link recovered — leaving slow-retry mode")
+
+    def _record_failure(self) -> int:
+        """A failed open. Returns the new consecutive-failure count."""
+        threshold = failure_threshold()
+        with self._lock:
+            self._consecutive_failures += 1
+            count = self._consecutive_failures
+            entering_slow = count >= threshold and not self._slow_retry
+            if entering_slow:
+                self._slow_retry = True
+        if entering_slow:
+            logger.warning(
+                "Meshtastic connect to %s failed %d consecutive times (threshold %d) — "
+                "reporting state=disconnected and backing off to a slow retry every %.0fs. "
+                "Retrying continues in the background so the node can still self-heal.",
+                self._host,
+                count,
+                threshold,
+                slow_retry_seconds(),
+            )
+        return count
 
     def _open(self) -> None:
         """(Re)open the interface and wire subscriptions. Raises on failure."""
@@ -170,13 +268,22 @@ class ConnectionManager:
             if self._iface is None:
                 try:
                     self._open()
+                except Exception as exc:
+                    self._record_failure()
+                    # Once past the threshold we report `disconnected` but keep
+                    # retrying — slowly — so the link still self-heals unattended.
+                    if self._slow_retry:
+                        wait = slow_retry_seconds()
+                    else:
+                        wait = backoff
+                        backoff = min(backoff * 2, 60)
+                    logger.warning("Meshtastic reconnect failed: %s (retry in %ss)", exc, wait)
+                    self._stop.wait(wait)
+                    continue
+                else:
+                    self._record_success()
                     logger.info("Meshtastic reconnected to %s", self._host)
                     backoff = 2
-                except Exception as exc:
-                    logger.warning("Meshtastic reconnect failed: %s (retry in %ss)", exc, backoff)
-                    self._stop.wait(backoff)
-                    backoff = min(backoff * 2, 60)
-                    continue
             self._stop.wait(3)  # poll for drops
 
     def _on_connection_lost(self, interface=None) -> None:
@@ -211,7 +318,11 @@ class ConnectionManager:
         self._stop.set()
         with self._lock:
             self._close_locked()
-        return {"connected": False}
+            # An explicit disconnect is not a retry state: report `disconnected`.
+            self._consecutive_failures = 0
+            self._slow_retry = False
+            self._hard_error = None
+        return {"connected": False, "state": STATE_DISCONNECTED}
 
     def _close_locked(self) -> None:
         try:
@@ -243,6 +354,24 @@ class ConnectionManager:
 
     def is_connected(self) -> bool:
         return self._iface is not None
+
+    def state(self) -> str:
+        """Return the three-state connection state.
+
+        `connected` only when there is a live interface. Everything else splits on
+        whether we are still usefully trying: `connecting` while the supervisor is
+        retrying at full rate below the failure threshold, `disconnected` once the
+        user disconnected, the radio library is missing, or N consecutive attempts
+        failed and we dropped to the slow retry.
+        """
+        if self._iface is not None:
+            return STATE_CONNECTED
+        if not self._want_connected:
+            return STATE_DISCONNECTED
+        with self._lock:
+            if self._hard_error is not None or self._slow_retry:
+                return STATE_DISCONNECTED
+        return STATE_CONNECTING
 
     @property
     def iface(self) -> Any:
@@ -333,9 +462,24 @@ class ConnectionManager:
         return out
 
     def status(self) -> dict[str, Any]:
+        """Connection status.
+
+        ``connected`` is kept as a bool for backwards compatibility and is True
+        ONLY for ``state == "connected"`` — while `connecting` there is no usable
+        interface, so every existing consumer (adapter health, send path, the
+        `iface` property) must keep treating it as not-usable. ``state`` is the new
+        three-valued field; ``consecutive_failures`` and ``slow_retry`` expose why.
+        """
+        state = self.state()
+        with self._lock:
+            failures = self._consecutive_failures
+            slow = self._slow_retry
         return {
-            "connected": self.is_connected(),
+            "connected": state == STATE_CONNECTED,
+            "state": state,
             "host": self._host,
+            "consecutive_failures": failures,
+            "slow_retry": slow,
             **self.local_node_identity(),
         }
 

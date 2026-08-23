@@ -64,7 +64,9 @@ def connect(args: dict) -> str:
         return _err("No host given and MESHTASTIC_HOST is not set.")
     port = int(args.get("port", 4403))
     status = get_manager().connect(host, port)
-    return _ok({"status": "connected", **status})
+    # "status" mirrors the three-state `state` field (it used to be hardcoded
+    # "connected", which lied while the node was still coming up).
+    return _ok({"status": status.get("state", "connected"), **status})
 
 
 @_guard

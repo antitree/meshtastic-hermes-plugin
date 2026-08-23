@@ -94,3 +94,23 @@ def test_register_bundles_skill():
     adapter.register(Ctx())
     # The responder skill registers regardless of whether the gateway runtime is present.
     assert "mesh-responder" in captured["skills"]
+
+
+def test_manager_status_connected_is_false_while_connecting():
+    """`connecting` is not a usable link — adapter health must stay false."""
+    assert (
+        adapter._manager_status_connected({"connected": False, "state": "connecting"}) is False
+    )
+
+
+def test_manager_status_state_reads_the_three_states():
+    assert adapter._manager_status_state({"state": "connecting"}) == "connecting"
+    assert adapter._manager_status_state({"state": "connected"}) == "connected"
+    assert adapter._manager_status_state({"state": "disconnected"}) == "disconnected"
+
+
+def test_manager_status_state_falls_back_to_the_legacy_boolean():
+    assert adapter._manager_status_state({"connected": True}) == "connected"
+    assert adapter._manager_status_state({"connected": False}) == "disconnected"
+    assert adapter._manager_status_state({"state": "bogus"}) == "disconnected"
+    assert adapter._manager_status_state(None) == "disconnected"

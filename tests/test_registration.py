@@ -241,3 +241,49 @@ def test_setup_argparse_wires_the_subcommands():
     assert parser.parse_args(["status"]).meshtastic_command == "status"
     assert parser.parse_args(["kb-summary"]).meshtastic_command == "kb-summary"
     assert parser.parse_args([]).func is pkg._cli_handler
+
+
+# ----------------------------------------------------------------------
+# Three-state rendering
+# ----------------------------------------------------------------------
+
+
+def test_render_connection_three_states():
+    assert pkg._render_connection({"state": "connected", "host": "1.2.3.4"}) == (
+        "connected to 1.2.3.4"
+    )
+    connecting = pkg._render_connection({"state": "connecting", "host": "1.2.3.4"})
+    assert connecting.startswith("connecting to 1.2.3.4")
+    assert "normal" in connecting  # tells the user a refused TCP is expected
+    assert pkg._render_connection({"state": "disconnected", "host": "1.2.3.4"}) == "disconnected"
+
+
+def test_render_connection_falls_back_to_the_legacy_boolean():
+    """A status record from an older build has no `state` key."""
+    assert pkg._render_connection({"connected": True, "host": "1.2.3.4"}) == "connected to 1.2.3.4"
+    assert pkg._render_connection({"connected": False, "host": "1.2.3.4"}) == "disconnected"
+
+
+def test_slash_status_while_connecting(monkeypatch):
+    mgr = connection.get_manager()
+    monkeypatch.setattr(
+        mgr,
+        "status",
+        lambda: {
+            "connected": False,
+            "state": "connecting",
+            "host": "1.2.3.4",
+            "node_id": None,
+        },
+    )
+    out = pkg._handle_slash("")
+    assert "Connection: connecting to 1.2.3.4" in out
+    assert "disconnected" not in out
+
+
+def test_normalize_platform_state():
+    assert pkg._normalize_platform_state("connected") == "connected"
+    for coming_up in ("connecting", "reconnecting", "starting", "initializing"):
+        assert pkg._normalize_platform_state(coming_up) == "connecting"
+    for dead in ("error", "stopped", None, "whatever"):
+        assert pkg._normalize_platform_state(dead) == "disconnected"
