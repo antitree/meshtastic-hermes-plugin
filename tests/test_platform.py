@@ -52,7 +52,7 @@ def test_allowed_channels_from_env(monkeypatch):
 def test_manager_status_connected_requires_connected_true():
     assert adapter._manager_status_connected({"connected": True}) is True
     assert adapter._manager_status_connected({"connected": False}) is False
-    assert adapter._manager_status_connected({"host": "10.2.2.60"}) is False
+    assert adapter._manager_status_connected({"host": "192.0.2.10"}) is False
     assert adapter._manager_status_connected(None) is False
 
 

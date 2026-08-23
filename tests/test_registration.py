@@ -169,7 +169,7 @@ def test_cli_status(monkeypatch, capsys):
 
 
 def test_cli_status_prefers_live_gateway_runtime(monkeypatch, capsys):
-    monkeypatch.setenv("MESHTASTIC_HOST", "10.2.2.60")
+    monkeypatch.setenv("MESHTASTIC_HOST", "192.0.2.10")
 
     gateway_pkg = types.ModuleType("gateway")
     status_mod = types.ModuleType("gateway.status")
@@ -202,7 +202,7 @@ def test_cli_status_prefers_live_gateway_runtime(monkeypatch, capsys):
     pkg._cli_handler(argparse.Namespace(meshtastic_command="status"))
     data = json.loads(capsys.readouterr().out)
     assert data["connected"] is True
-    assert data["host"] == "10.2.2.60"
+    assert data["host"] == "192.0.2.10"
     assert data["source"] == "gateway_runtime"
     assert data["node_id"] == "!aabbccdd"
     assert data["true_node_id"] == "!aabbccdd"

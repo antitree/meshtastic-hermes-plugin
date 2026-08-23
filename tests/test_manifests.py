@@ -307,7 +307,7 @@ def test_interactive_setup_reports_an_already_configured_host(monkeypatch, capsy
     from meshtastic_platform import adapter
 
     saved: dict = {}
-    env = {"MESHTASTIC_HOST": "10.2.2.60"}
+    env = {"MESHTASTIC_HOST": "192.0.2.10"}
     fake_config = types.SimpleNamespace(
         get_env_value=env.get,
         save_env_value=lambda k, v: saved.__setitem__(k, v),
@@ -320,8 +320,8 @@ def test_interactive_setup_reports_an_already_configured_host(monkeypatch, capsy
     adapter.interactive_setup()
     out = capsys.readouterr().out
 
-    assert "MESHTASTIC_HOST is already set (10.2.2.60)." in out
-    assert "Meshtastic is configured (MESHTASTIC_HOST=10.2.2.60)." in out
+    assert "MESHTASTIC_HOST is already set (192.0.2.10)." in out
+    assert "Meshtastic is configured (MESHTASTIC_HOST=192.0.2.10)." in out
     assert "is NOT configured" not in out
     assert "/home/u/.hermes/profiles/meshy/.env" in out
     assert saved == {}, "pressing enter must not overwrite existing values"
@@ -341,14 +341,14 @@ def test_interactive_setup_saves_a_new_host_and_reports_it(monkeypatch, capsys):
 
     # One answer per prompt: the host, then blank (skip) for every optional var.
     # Derived from _SETUP_ENV_VARS so adding an optional var doesn't break this.
-    answers = iter(["10.2.2.60"] + [""] * (len(adapter._SETUP_ENV_VARS) - 1))
+    answers = iter(["192.0.2.10"] + [""] * (len(adapter._SETUP_ENV_VARS) - 1))
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
 
     adapter.interactive_setup()
     out = capsys.readouterr().out
 
-    assert env == {"MESHTASTIC_HOST": "10.2.2.60"}
-    assert "Meshtastic is configured (MESHTASTIC_HOST=10.2.2.60)." in out
+    assert env == {"MESHTASTIC_HOST": "192.0.2.10"}
+    assert "Meshtastic is configured (MESHTASTIC_HOST=192.0.2.10)." in out
 
 
 def test_interactive_setup_reports_a_genuinely_missing_host(monkeypatch, capsys):
