@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -23,6 +24,7 @@ from .connection import (
     get_manager,
     validate_connect_target,
 )
+from . import ipc
 from .observer import get_observer
 from .policy import ToolSendRejected, validate_tool_send
 from .privacy import (
@@ -208,6 +210,17 @@ def send_text(args: dict) -> str:
             "dest_id": dest_id,
         }
     )
+
+
+@_guard
+def meshagatchi_submit_event(args: dict) -> str:
+    """Submit a structured event through the live Meshagatchi sidecar."""
+    socket_path = (os.getenv("MESHTASTIC_MESHAGATCHI_SOCKET")
+                   or os.getenv("MESHTASTIC_IPC_SOCKET") or "").strip()
+    if not socket_path:
+        return _err("Meshagatchi event interface is not configured", code="unavailable")
+    response = ipc.round_trip(socket_path, {"op": "event.submit", "event": args})
+    return _ok(response)
 
 
 @_guard

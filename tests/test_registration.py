@@ -40,7 +40,7 @@ class _MinimalCtx:
 def test_register_survives_a_context_without_the_optional_apis():
     ctx = _MinimalCtx()
     pkg.register(ctx)  # must not raise
-    assert len(ctx.tools) == 12
+    assert len(ctx.tools) == 13
     assert set(ctx.hooks) == {"on_session_start", "on_session_end"}
     assert set(ctx.skills) == {"mesh-recon", "messaging-safety"}
 

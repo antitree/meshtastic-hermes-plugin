@@ -6,7 +6,7 @@ are pure functions — no radio and no Hermes imports — so the routing/reply p
 is unit-testable without hardware.
 
 `chat_id` scheme (a stable conversation identifier the agent/gateway keys on):
-  - Direct message  -> the peer node id, e.g. "!a696579c"
+  - Direct message  -> the peer node id, e.g. "!deadbeef"
   - Channel message -> "ch:<index>",   e.g. "ch:0"
 """
 
@@ -268,7 +268,7 @@ def _known_names(table: list[dict]) -> str:
 
 # A mention may be followed by end-of-string, whitespace, or a ':'/',' separator,
 # which is consumed along with the mention. This is what stops a short name
-# "RED" from matching "REDBOX weather" or "REDDIT is down".
+# "MES" from matching "MESHNET weather" or "MESHY is down".
 _MENTION_TAIL = re.compile(r"^(?:[\s:,]+|$)")
 
 
@@ -313,15 +313,15 @@ def match_mention(
       - The node id matches with or without its leading ``!``.
       - The mention must be followed by end-of-string, whitespace, or a ``:``/``,``
         separator, which is consumed. A mention mid-sentence never matches, and a
-        longer word that merely *starts with* an identifier ("REDBOX", "REDDIT")
+        longer word that merely *starts with* an identifier ("MESHNET", "MESHY")
         never matches.
       - The long name is matched literally (case-insensitively), spaces and
         punctuation included — never token-by-token. Names are compared with
         casefolded ``str.startswith``, never interpolated into a pattern, so a
-        name containing regex metacharacters ("R.B", "a+b") matches only itself
+        name containing regex metacharacters ("M.SH", "a+b") matches only itself
         and can never become a wildcard.
       - When several identifiers match, the LONGEST wins, so a long name that
-        begins with the short name ("RED Box" vs "REDB") strips the whole thing
+        begins with the short name ("MESHTASTIC Bot" vs "MESH") strips the whole thing
         rather than leaving a stray word behind.
 
     The returned remainder is stripped of surrounding whitespace, so a bare
@@ -348,7 +348,7 @@ def match_mention(
             continue
         rest = body[len(cand):]
         if not _MENTION_TAIL.match(rest):
-            continue  # a longer word, not a mention: "REDBOX" for short name "RED"
+            continue  # a longer word, not a mention: "MESHNET" for short name "MES"
         if best is None or len(cand) > best:
             best = len(cand)
 
@@ -416,7 +416,7 @@ def apply_mention_gate(
     all we cannot tell whether we were addressed, so channel traffic is DROPPED
     rather than answered. We never fall through to "reply to everything".
 
-    A bare mention with nothing after it ("REDB") yields an empty ``text``. It is
+    A bare mention with nothing after it ("MESH") yields an empty ``text``. It is
     still forwarded: the message WAS addressed to us, and an agent answering
     "yes?" is a better response to being called by name than silence. Callers
     that need a non-empty prompt can check ``inbound["text"]``.

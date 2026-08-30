@@ -48,7 +48,6 @@ def tool_send_allowed(monkeypatch):
     Tool broadcasts are refused by default; tests below that are about SEND
     MECHANICS rather than policy opt in explicitly.
     """
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
 
 

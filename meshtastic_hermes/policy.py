@@ -17,13 +17,24 @@ Design rules, in the order they matter:
 1. **Fail closed.** With nothing configured, only a PKI direct message is allowed.
    A DM is point-to-point and end-to-end encrypted; a channel send is a broadcast
    to everyone holding that channel's key.
-2. **No implicit channel 0.** A broadcast must name its channel. There is no
+2. **One variable, and the allowlist IS the permission.** A single setting,
+   ``MESHTASTIC_TOOL_SEND_CHANNELS``, decides everything about broadcasts: unset
+   means no broadcast at all, and a non-empty allowlist authorizes exactly the
+   channels it names. There is deliberately no separate "may I broadcast?" switch
+   on top of it — a second flag that had to agree with the first only ever produced
+   configurations that looked enabled and were not.
+3. **No implicit channel 0.** A broadcast must name its channel. There is no
    default, because the default would be the public one.
-3. **Reply policy does NOT authorize tool sends.** ``MESHTASTIC_REPLY_CHANNELS``
+4. **Primary is opt-in BY NAME, never by wildcard.** The Primary channel's PSK is
+   public on a default radio, so it is authorized only by naming it explicitly
+   (``Primary``, or its actual name). ``all`` covers every *other* channel and
+   deliberately stops short of Primary: a wildcard is a statement about the private
+   channels an operator has set up, not consent to transmit in the clear.
+5. **Reply policy does NOT authorize tool sends.** ``MESHTASTIC_REPLY_CHANNELS``
    says "you may answer someone who spoke to you here". That is a much smaller
    permission than "you may originate traffic here whenever you decide to", so
-   tool sends get their own separate variables.
-4. **Names, not indices.** Channel names are resolved against the radio's channel
+   tool sends keep their own separate variable.
+6. **Names, not indices.** Channel names are resolved against the radio's channel
    table via :func:`meshtastic_hermes.gateway_bridge.resolve_channel_spec` — the
    same machinery the reply allowlist uses. An index is a radio SLOT, not a channel
    identity, so a numeric entry warns exactly as it does for reply channels.
@@ -44,8 +55,17 @@ logger = logging.getLogger(__name__)
 _TRUTHY = {"1", "true", "yes", "on"}
 
 TOOL_SEND_CHANNELS_ENV = "MESHTASTIC_TOOL_SEND_CHANNELS"
-TOOL_SEND_ALLOW_PRIMARY_ENV = "MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY"
-TOOL_SEND_ALLOW_BROADCAST_ENV = "MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST"
+
+# Removed in 0.2.0. MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST and
+# MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY were separate switches that had to AGREE with
+# TOOL_SEND_CHANNELS before anything could be transmitted, which meant the common
+# failure was a config that named a channel and still refused to send. They are
+# named here only so a stale value in an operator's .env produces a pointed warning
+# instead of silently doing nothing. See _warn_removed_vars().
+_REMOVED_ENV = (
+    "MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST",
+    "MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY",
+)
 
 
 class ToolSendRejected(ValueError):
@@ -83,24 +103,33 @@ def _env(name: str) -> str:
     return (os.environ.get(name) or "").strip()
 
 
-def _flag(name: str) -> bool:
-    """A policy flag is on ONLY for an explicit truthy value — a typo fails closed."""
-    return _env(name).lower() in _TRUTHY
+def _warn_removed_vars() -> None:
+    """Tell an operator whose .env still carries the pre-0.2.0 switches.
+
+    Silence here would be the worst outcome: someone who set
+    ``MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST=true`` and nothing else would find
+    broadcasts refused with no hint that the variable no longer exists.
+    """
+    for name in _REMOVED_ENV:
+        if _env(name):
+            logger.warning(
+                "%s is no longer used and is ignored. %s alone now authorizes tool "
+                "broadcasts: list the channel NAMES the tool may transmit on, e.g. "
+                '%s="in.secure". The Primary channel is authorized only by naming it '
+                "explicitly.",
+                name,
+                TOOL_SEND_CHANNELS_ENV,
+                TOOL_SEND_CHANNELS_ENV,
+            )
 
 
 def allow_broadcast() -> bool:
-    """Whether the tool may originate non-DM channel broadcasts at all."""
-    return _flag(TOOL_SEND_ALLOW_BROADCAST_ENV)
+    """Whether the tool may originate non-DM channel broadcasts at all.
 
-
-def allow_primary() -> bool:
-    """Whether the tool may broadcast on the PRIMARY channel specifically.
-
-    Primary is the channel whose PSK is public on a default radio, so it gets its
-    own switch on top of :func:`allow_broadcast`: an operator who opens up a private
-    channel has not thereby opened up the public one.
+    True exactly when ``MESHTASTIC_TOOL_SEND_CHANNELS`` names something. The
+    allowlist IS the permission — there is no second switch to forget.
     """
-    return _flag(TOOL_SEND_ALLOW_PRIMARY_ENV)
+    return tool_send_channel_spec() is not None
 
 
 def tool_send_channel_spec():
@@ -112,7 +141,11 @@ def tool_send_channel_spec():
 
     Numeric entries are accepted for symmetry with the reply allowlist and warn for
     the same reason — an index is a slot, not an identity.
+
+    Returns ``None`` when the variable is unset or empty, which is what "no channel
+    broadcasts at all" means now that there is no separate broadcast flag.
     """
+    _warn_removed_vars()
     spec = gb.parse_channel_spec(_env(TOOL_SEND_CHANNELS_ENV) or None)
     if isinstance(spec, gb.ChannelSpec) and spec.indices:
         logger.warning(
@@ -151,6 +184,36 @@ def _primary_index(channel_table: list[dict] | None) -> int | None:
     return None
 
 
+def _primary_named(spec, channel_table: list[dict]) -> bool:
+    """Whether the allowlist names the PRIMARY channel EXPLICITLY.
+
+    This is the one place ``all`` is not enough. ``ALL_CHANNELS`` is a statement
+    about the channels an operator configured; the Primary channel's PSK is public
+    on a default radio, so transmitting there has to be written down on purpose.
+
+    Three spellings count, matching how the radio can present Primary:
+
+    - its real name, when the operator gave the primary channel one;
+    - an alias (``Primary``/``LongFast``) when the primary is unnamed, which is how
+      :func:`gateway_bridge.resolve_channel_spec` already reaches it;
+    - its legacy numeric index, which is explicit even though it is a slot.
+    """
+    if spec is None or spec == gb.ALL_CHANNELS or not isinstance(spec, gb.ChannelSpec):
+        return False
+
+    primary = _primary_index(channel_table)
+    if primary is None:
+        return False
+    if primary in spec.indices:
+        return True
+
+    # Resolve only the NAMES, so an `all` can never leak in through this path.
+    allowed, _resolved = gb.resolve_channel_spec(
+        gb.ChannelSpec(names=spec.names), channel_table, log=logger
+    )
+    return isinstance(allowed, set) and primary in allowed
+
+
 def _coerce_channel_index(raw: Any) -> int:
     if isinstance(raw, bool):  # bool is an int subclass — never a channel
         raise ToolSendRejected("channel_index must be an integer.", code="invalid_channel")
@@ -180,10 +243,11 @@ def validate_tool_send(args: dict, channel_table: list[dict] | None) -> ToolSend
       because a non-PKI DM is only channel-PSK encrypted and is therefore readable
       by every other holder of that channel's key. A plaintext DM is treated as a
       channel send on its routing channel and must clear the broadcast gates.
-    - no ``dest_id`` → a broadcast. It needs ``MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST``,
-      an explicit ``channel_index`` or channel name (never a defaulted 0), that
-      channel on the ``MESHTASTIC_TOOL_SEND_CHANNELS`` allowlist, and — if it is the
-      Primary channel — ``MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY`` as well.
+    - no ``dest_id`` → a broadcast. It needs an explicit ``channel_index`` or
+      ``channel_name`` (never a defaulted 0) naming a channel that
+      ``MESHTASTIC_TOOL_SEND_CHANNELS`` lists. That one variable is the whole
+      permission, with one carve-out: the Primary channel counts as listed only when
+      it is named outright, never via ``all``.
     """
     args = args or {}
     dest_id = args.get("dest_id") or None
@@ -219,18 +283,19 @@ def validate_tool_send(args: dict, channel_table: list[dict] | None) -> ToolSend
         )
 
     # ── broadcast ────────────────────────────────────────────────────────────
-    if not allow_broadcast():
+    table = channel_table or []
+    spec = tool_send_channel_spec()
+    if spec is None:
         raise ToolSendRejected(
             "Channel broadcasts from the meshtastic_send_text tool are disabled. This "
-            "tool sends PKI direct messages only unless "
-            f"{TOOL_SEND_ALLOW_BROADCAST_ENV}=true is set (and the target channel is "
-            f"listed in {TOOL_SEND_CHANNELS_ENV}). Reply-channel policy does not "
-            "authorize tool-originated sends.",
+            "tool sends PKI direct messages only until "
+            f"{TOOL_SEND_CHANNELS_ENV} lists the channel NAME(s) it may transmit on, "
+            f'e.g. {TOOL_SEND_CHANNELS_ENV}="in.secure" (see meshtastic_list_channels). '
+            "Reply-channel policy does not authorize tool-originated sends.",
             code="broadcast_disabled",
         )
 
-    table = channel_table or []
-    allowed = allowed_tool_send_channels(table)
+    allowed, _resolved = gb.resolve_channel_spec(spec, table, log=logger)
 
     if channel_name is not None and str(channel_name).strip():
         index = _resolve_name(str(channel_name).strip(), table)
@@ -246,9 +311,13 @@ def validate_tool_send(args: dict, channel_table: list[dict] | None) -> ToolSend
         )
 
     if allowed is None:
+        # Configured, but nothing in it resolved: every name in the allowlist is
+        # absent from the radio's channel table. Distinct from "not configured",
+        # and a different fix — check the spelling against the radio.
         raise ToolSendRejected(
-            f"No tool-send channels are configured. Set {TOOL_SEND_CHANNELS_ENV} to the "
-            "channel NAME(s) this tool may transmit on (see meshtastic_list_channels).",
+            f"None of the channels in {TOOL_SEND_CHANNELS_ENV} are on the radio's "
+            f"channel table (known channels: {gb._known_names(table) or '<none>'}). "
+            "Channel names are case-sensitive; list them with meshtastic_list_channels.",
             code="no_allowed_channels",
         )
     if allowed != gb.ALL_CHANNELS and index not in allowed:
@@ -259,11 +328,15 @@ def validate_tool_send(args: dict, channel_table: list[dict] | None) -> ToolSend
         )
 
     primary = _primary_index(table)
-    if primary is not None and index == primary and not allow_primary():
+    if primary is not None and index == primary and not _primary_named(spec, table):
+        # `all` deliberately stops short of Primary. A wildcard says "any channel I
+        # set up"; the Primary channel's PSK is public on a default radio, so
+        # transmitting there is a separate decision that has to be written down.
         raise ToolSendRejected(
             f"Channel index {index} is the PRIMARY channel, whose key is public on a "
-            f"default radio. Sending there from a tool requires "
-            f"{TOOL_SEND_ALLOW_PRIMARY_ENV}=true in addition to the channel allowlist.",
+            f"default radio. It is not covered by a wildcard: name it explicitly in "
+            f'{TOOL_SEND_CHANNELS_ENV} (e.g. {TOOL_SEND_CHANNELS_ENV}="Primary") to '
+            "transmit there.",
             code="primary_not_allowed",
         )
 

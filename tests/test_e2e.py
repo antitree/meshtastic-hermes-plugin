@@ -216,8 +216,7 @@ def test_e2e_observation_survives_a_reconnect(radio, monkeypatch):
 
 def test_e2e_send_reaches_the_radio(radio, monkeypatch):
     # Tool broadcasts need an explicit opt-in (remediation item 1); this test is
-    # about the radio path, so grant it.
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
+    # about the radio path, so grant it by naming the channel.
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "ops")
     result = json.loads(
         tools.send_text({"text": "outbound", "channel_name": "ops", "want_ack": False})

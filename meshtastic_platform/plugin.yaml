@@ -1,7 +1,7 @@
 name: meshtastic-platform
 label: Meshtastic
 kind: platform
-version: "0.1.13"
+version: "0.1.14"
 description: >-
   Meshtastic LoRa mesh gateway adapter for Hermes Agent. Relays inbound mesh text
   messages to the agent and sends the agent's replies back over the radio. Direct
@@ -10,11 +10,22 @@ author: Thomas Pham
 
 requires_env:
   - name: MESHTASTIC_HOST
-    description: "Meshtastic node host/IP to connect to over TCP (e.g. 192.168.55.73)."
+    description: "Meshtastic node host/IP to connect to over TCP (e.g. 192.0.2.10)."
     prompt: "Meshtastic node host/IP"
     password: false
 
 optional_env:
+  - name: MESHTASTIC_MESHAGATCHI_SOCKET
+    description: >-
+      Same-user Unix socket for the deterministic Meshagatchi sidecar. When set,
+      MeshHermes forwards decoded text from the configured channel and accepts
+      channel-pinned send requests without opening another radio connection.
+    prompt: "Meshagatchi IPC socket path (or empty)"
+    password: false
+  - name: MESHTASTIC_MESHAGATCHI_CHANNEL
+    description: "Exact channel name for Meshagatchi IPC; it must resolve to radio channel index 1. Defaults to in.secure."
+    prompt: "Meshagatchi channel name"
+    password: false
   - name: MESHTASTIC_REPLY_ALL
     description: "Reply on every channel incl. public Primary (1/true/yes). Default: DMs only."
     prompt: "Reply on all channels? (true/false)"
@@ -38,10 +49,10 @@ optional_env:
       Require a CHANNEL message to be addressed to this node before the bot
       replies. Default TRUE — set to 0/false/no (case-insensitive) to reply to
       every message on an allowlisted channel. A message counts as addressed when
-      it STARTS WITH this node's short name, long name, or node id, e.g. 'REDB
-      weather', 'redb: weather', '@RED Box weather', '!deadbeef weather' — case-
+      it STARTS WITH this node's short name, long name, or node id, e.g. 'MESH
+      weather', 'mesh: weather', '@MESHTASTIC Bot weather', '!deadbeef weather' — case-
       insensitive, an optional leading '@', the node id with or without its '!',
-      and a ':'/',' or space after the name. A mention mid-sentence ('ask REDB
+      and a ':'/',' or space after the name. A mention mid-sentence ('ask MESH
       about the weather') does NOT count. The mention is stripped before the text
       reaches the agent. DIRECT MESSAGES are always answered and never need a
       mention. Turning this off is what lets two bots on one channel reply to each
@@ -122,7 +133,7 @@ optional_env:
     prompt: "Log message bodies too? (true/false, default false)"
     password: false
   - name: MESHTASTIC_ALLOWED_USERS
-    description: "Comma-separated node ids allowed to talk to the agent, e.g. '!a696579c,!0aca4a9c'. Empty + allow-all off = nobody (deny by default)."
+    description: "Comma-separated node ids allowed to talk to the agent, e.g. '!deadbeef,!cafebabe'. Empty + allow-all off = nobody (deny by default)."
     prompt: "Allowed node ids (comma-separated)"
     password: false
   - name: MESHTASTIC_ALLOW_ALL_USERS

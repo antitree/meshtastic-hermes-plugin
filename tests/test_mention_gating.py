@@ -22,8 +22,8 @@ import pytest
 from meshtastic_hermes import gateway_bridge as gb
 
 # The worked example from the feature spec.
-SHORT = "REDB"
-LONG = "RED Box"
+SHORT = "MESH"
+LONG = "MESHTASTIC Bot"
 NODE = "!deadbeef"
 ID = gb.Identity(node_id=NODE, short_name=SHORT, long_name=LONG)
 
@@ -43,12 +43,12 @@ def _m(text, **kw):
 @pytest.mark.parametrize(
     "text,remainder",
     [
-        ("REDB can you give me the weather?", "can you give me the weather?"),
-        ("redb weather", "weather"),
-        ("ReDb: Weather now", "Weather now"),
-        ("RED BOX can you give me the weather", "can you give me the weather"),
-        ("@redb weather", "weather"),
-        ("@RED Box weather now", "weather now"),
+        ("MESH can you give me the weather?", "can you give me the weather?"),
+        ("mesh weather", "weather"),
+        ("MeSh: Weather now", "Weather now"),
+        ("MESHTASTIC BOT can you give me the weather", "can you give me the weather"),
+        ("@mesh weather", "weather"),
+        ("@MESHTASTIC Bot weather now", "weather now"),
         ("!deadbeef weather", "weather"),
         ("@!deadbeef weather", "weather"),
     ],
@@ -60,15 +60,15 @@ def test_spec_examples_all_match_and_strip(text, remainder):
 @pytest.mark.parametrize(
     "text,remainder",
     [
-        ("REDB, weather", "weather"),            # comma separator
-        ("REDB:weather", "weather"),             # colon, no space
-        ("REDB   weather", "weather"),           # runs of whitespace
-        ("  REDB weather", "weather"),           # leading whitespace on the packet
-        ("@  REDB weather", "weather"),          # space after the @
+        ("MESH, weather", "weather"),            # comma separator
+        ("MESH:weather", "weather"),             # colon, no space
+        ("MESH   weather", "weather"),           # runs of whitespace
+        ("  MESH weather", "weather"),           # leading whitespace on the packet
+        ("@  MESH weather", "weather"),          # space after the @
         ("deadbeef weather", "weather"),         # node id without its '!'
         ("!DEADBEEF weather", "weather"),        # node id is case-insensitive too
-        ("red box: weather", "weather"),         # long name, lowered, with a colon
-        ("REDB what is 2 + 2?", "what is 2 + 2?"),
+        ("meshtastic bot: weather", "weather"),         # long name, lowered, with a colon
+        ("MESH what is 2 + 2?", "what is 2 + 2?"),
     ],
 )
 def test_accepted_variations(text, remainder):
@@ -83,11 +83,11 @@ def test_accepted_variations(text, remainder):
 @pytest.mark.parametrize(
     "text",
     [
-        "ask REDB about the weather",     # mention mid-sentence
-        "I think RED Box is offline",     # long name mid-sentence
+        "ask MESH about the weather",     # mention mid-sentence
+        "I think MESHTASTIC Bot is offline",     # long name mid-sentence
         "tell !deadbeef to reboot",       # node id mid-sentence
         "hello everyone",                 # no mention at all
-        "weather REDB",                   # mention at the END, not the start
+        "weather MESH",                   # mention at the END, not the start
         "",                               # empty text
         "   ",                            # whitespace only
         "@",                              # a bare @ addresses nobody
@@ -100,9 +100,9 @@ def test_no_match_means_no_transmission(text):
 @pytest.mark.parametrize(
     "text",
     [
-        "REDBOX weather",     # longer word starting with the short name
-        "REDBs are cool",
-        "RED Boxing tonight",  # longer word starting with the long name
+        "MESHNET weather",     # longer word starting with the short name
+        "MESHs are cool",
+        "MESHTASTIC Botting tonight",  # longer word starting with the long name
     ],
 )
 def test_a_longer_word_starting_with_an_identifier_is_not_a_mention(text):
@@ -111,12 +111,12 @@ def test_a_longer_word_starting_with_an_identifier_is_not_a_mention(text):
 
 
 def test_short_name_is_not_a_prefix_wildcard():
-    """The classic case: short name 'RED' must not answer REDBOX or REDDIT."""
-    kw = {"short_name": "RED", "long_name": None, "node_id": None}
-    assert gb.match_mention("REDBOX weather", **kw) is None
-    assert gb.match_mention("REDDIT is down", **kw) is None
-    assert gb.match_mention("RED weather", **kw) == "weather"
-    assert gb.match_mention("RED: weather", **kw) == "weather"
+    """The classic case: short name 'MES' must not answer MESHNET or MESHY."""
+    kw = {"short_name": "MES", "long_name": None, "node_id": None}
+    assert gb.match_mention("MESHNET weather", **kw) is None
+    assert gb.match_mention("MESHY is down", **kw) is None
+    assert gb.match_mention("MES weather", **kw) == "weather"
+    assert gb.match_mention("MES: weather", **kw) == "weather"
 
 
 # ----------------------------------------------------------------------
@@ -125,19 +125,19 @@ def test_short_name_is_not_a_prefix_wildcard():
 
 
 def test_longest_match_wins_when_the_long_name_starts_with_the_short_name():
-    """'RED Box weather' must strip the whole long name, not leave 'Box weather'."""
-    kw = {"short_name": "RED", "long_name": "RED Box", "node_id": "!deadbeef"}
-    assert gb.match_mention("RED Box weather", **kw) == "weather"
-    assert gb.match_mention("RED weather", **kw) == "weather"
+    """'MESHTASTIC Bot weather' must strip the whole long name, not leave 'Box weather'."""
+    kw = {"short_name": "MES", "long_name": "MESHTASTIC Bot", "node_id": "!deadbeef"}
+    assert gb.match_mention("MESHTASTIC Bot weather", **kw) == "weather"
+    assert gb.match_mention("MES weather", **kw) == "weather"
 
 
 def test_long_name_is_matched_literally_not_token_by_token():
-    kw = {"short_name": None, "long_name": "RED Box", "node_id": None}
-    assert gb.match_mention("RED Box weather", **kw) == "weather"
+    kw = {"short_name": None, "long_name": "MESHTASTIC Bot", "node_id": None}
+    assert gb.match_mention("MESHTASTIC Bot weather", **kw) == "weather"
     # Only the first token of the long name is not a mention.
-    assert gb.match_mention("RED weather", **kw) is None
+    assert gb.match_mention("MES weather", **kw) is None
     # Neither is the long name with its internal spacing changed.
-    assert gb.match_mention("REDBox weather", **kw) is None
+    assert gb.match_mention("MESHTASTICBot weather", **kw) is None
 
 
 def test_names_with_regex_metacharacters_match_only_themselves():
@@ -153,8 +153,8 @@ def test_names_with_regex_metacharacters_match_only_themselves():
 
 
 def test_names_are_stripped_of_surrounding_whitespace():
-    kw = {"short_name": "  REDB  ", "long_name": None, "node_id": None}
-    assert gb.match_mention("REDB weather", **kw) == "weather"
+    kw = {"short_name": "  MESH  ", "long_name": None, "node_id": None}
+    assert gb.match_mention("MESH weather", **kw) == "weather"
 
 
 # ----------------------------------------------------------------------
@@ -167,12 +167,12 @@ def test_gating_still_works_on_node_id_alone():
     kw = {"short_name": None, "long_name": None, "node_id": "!deadbeef"}
     assert gb.match_mention("!deadbeef weather", **kw) == "weather"
     assert gb.match_mention("deadbeef weather", **kw) == "weather"
-    assert gb.match_mention("REDB weather", **kw) is None  # name is not known yet
+    assert gb.match_mention("MESH weather", **kw) is None  # name is not known yet
 
 
 def test_no_identifiers_at_all_matches_nothing():
     """Fail closed: with nothing to match, nothing is a mention."""
-    assert gb.match_mention("REDB weather", short_name=None, long_name=None, node_id=None) is None
+    assert gb.match_mention("MESH weather", short_name=None, long_name=None, node_id=None) is None
     assert gb.match_mention("anything", short_name="", long_name="", node_id="") is None
 
 
@@ -184,10 +184,10 @@ def test_no_identifiers_at_all_matches_nothing():
 def test_a_bare_mention_returns_empty_string_not_none():
     """Documented behavior: "" means 'addressed us, said nothing'; None means
     'did not address us'. They are deliberately distinguishable."""
-    assert _m("REDB") == ""
-    assert _m("REDB:") == ""
-    assert _m("@RED Box  ") == ""
-    assert _m("REDB") is not None
+    assert _m("MESH") == ""
+    assert _m("MESH:") == ""
+    assert _m("@MESHTASTIC Bot  ") == ""
+    assert _m("MESH") is not None
 
 
 # ----------------------------------------------------------------------
@@ -201,11 +201,11 @@ def test_identity_from_status_reads_the_connection_manager_shape():
             "node_id": "!deadbeef",
             "true_node_id": "!deadbeef",
             "node_num": 3735928559,
-            "short_name": "REDB",
-            "long_name": "RED Box",
+            "short_name": "MESH",
+            "long_name": "MESHTASTIC Bot",
         }
     )
-    assert (ident.node_id, ident.short_name, ident.long_name) == ("!deadbeef", "REDB", "RED Box")
+    assert (ident.node_id, ident.short_name, ident.long_name) == ("!deadbeef", "MESH", "MESHTASTIC Bot")
     assert ident
     assert not ident.is_degraded
 
@@ -219,7 +219,7 @@ def test_identity_truthiness_and_degradation():
     assert only_id
     assert only_id.is_degraded, "node id alone still gates, but misses name mentions"
 
-    full = gb.Identity(node_id="!deadbeef", short_name="REDB", long_name="RED Box")
+    full = gb.Identity(node_id="!deadbeef", short_name="MESH", long_name="MESHTASTIC Bot")
     assert not full.is_degraded
 
 
@@ -246,28 +246,28 @@ def test_dms_are_always_answered_and_never_stripped():
     assert gb.apply_mention_gate(dm, ID)["text"] == "weather now"
     # ...even with no identity at all, and even if it happens to name us.
     assert gb.apply_mention_gate(dm, gb.Identity()) is dm
-    named = _inbound("REDB weather", is_dm=True)
-    assert gb.apply_mention_gate(named, ID)["text"] == "REDB weather"
+    named = _inbound("MESH weather", is_dm=True)
+    assert gb.apply_mention_gate(named, ID)["text"] == "MESH weather"
 
 
 def test_channel_message_with_a_mention_is_stripped_for_the_agent():
-    """User decision 2: the agent sees 'weather now', not 'REDB weather now'."""
-    gated = gb.apply_mention_gate(_inbound("REDB weather now"), ID)
+    """User decision 2: the agent sees 'weather now', not 'MESH weather now'."""
+    gated = gb.apply_mention_gate(_inbound("MESH weather now"), ID)
     assert gated is not None
     assert gated["text"] == "weather now"
-    assert gated["raw_text"] == "REDB weather now", "the original is preserved"
+    assert gated["raw_text"] == "MESH weather now", "the original is preserved"
     assert gated["mentioned"] is True
 
 
 def test_channel_message_without_a_mention_is_dropped():
     assert gb.apply_mention_gate(_inbound("what is the weather?"), ID) is None
-    assert gb.apply_mention_gate(_inbound("ask REDB about the weather"), ID) is None
+    assert gb.apply_mention_gate(_inbound("ask MESH about the weather"), ID) is None
 
 
 def test_the_gate_does_not_mutate_the_input():
-    inbound = _inbound("REDB weather")
+    inbound = _inbound("MESH weather")
     gb.apply_mention_gate(inbound, ID)
-    assert inbound["text"] == "REDB weather"
+    assert inbound["text"] == "MESH weather"
     assert "raw_text" not in inbound
 
 
@@ -279,7 +279,7 @@ def test_gating_off_passes_channel_traffic_through_untouched():
 def test_fail_closed_when_identity_is_unknown():
     """Never fall through to 'reply to everything' because we don't know our name."""
     for identity in (None, gb.Identity(), gb.Identity.from_status({})):
-        assert gb.apply_mention_gate(_inbound("REDB weather"), identity) is None
+        assert gb.apply_mention_gate(_inbound("MESH weather"), identity) is None
         assert gb.apply_mention_gate(_inbound("anything"), identity) is None
     # DMs are unaffected by the degraded state.
     assert gb.apply_mention_gate(_inbound("hi", is_dm=True), None) is not None
@@ -288,15 +288,15 @@ def test_fail_closed_when_identity_is_unknown():
 def test_gating_on_node_id_alone_still_answers_an_id_mention():
     only_id = gb.Identity(node_id="!deadbeef")
     assert gb.apply_mention_gate(_inbound("!deadbeef weather"), only_id)["text"] == "weather"
-    assert gb.apply_mention_gate(_inbound("REDB weather"), only_id) is None
+    assert gb.apply_mention_gate(_inbound("MESH weather"), only_id) is None
 
 
 def test_a_bare_mention_is_forwarded_with_empty_text():
     """Documented: being called by name with no question still reaches the agent."""
-    gated = gb.apply_mention_gate(_inbound("REDB"), ID)
+    gated = gb.apply_mention_gate(_inbound("MESH"), ID)
     assert gated is not None
     assert gated["text"] == ""
-    assert gated["raw_text"] == "REDB"
+    assert gated["raw_text"] == "MESH"
 
 
 # ----------------------------------------------------------------------
@@ -306,9 +306,9 @@ def test_a_bare_mention_is_forwarded_with_empty_text():
 
 def test_should_reply_applies_mention_gating_on_channels_only():
     kw = {"allowed_channels": {1}, "identity": ID, "require_mention": True}
-    assert gb.should_reply(_inbound("REDB weather"), **kw) is True
+    assert gb.should_reply(_inbound("MESH weather"), **kw) is True
     assert gb.should_reply(_inbound("weather"), **kw) is False
-    assert gb.should_reply(_inbound("ask REDB later"), **kw) is False
+    assert gb.should_reply(_inbound("ask MESH later"), **kw) is False
     # DMs bypass the gate entirely.
     assert gb.should_reply(_inbound("weather", is_dm=True), **kw) is True
 
@@ -317,7 +317,7 @@ def test_should_reply_channel_allowlist_still_applies_first():
     """A mention on a channel that is NOT allowlisted is still silence."""
     assert (
         gb.should_reply(
-            _inbound("REDB weather", channel=9),
+            _inbound("MESH weather", channel=9),
             allowed_channels={1},
             identity=ID,
             require_mention=True,
@@ -356,7 +356,7 @@ def test_process_inbound_strips_the_mention_before_the_responder_sees_it():
         return "ok"
 
     result = gb.process_inbound(
-        _packet("REDB weather now"),
+        _packet("MESH weather now"),
         "!deadbeef",
         responder,
         allowed_channels={1},
@@ -365,7 +365,7 @@ def test_process_inbound_strips_the_mention_before_the_responder_sees_it():
     )
     assert result["action"] == "reply"
     assert seen == ["weather now"], "the agent must never see the mention"
-    assert result["inbound"]["raw_text"] == "REDB weather now"
+    assert result["inbound"]["raw_text"] == "MESH weather now"
     assert result["chat_id"] == "ch:1"
 
 

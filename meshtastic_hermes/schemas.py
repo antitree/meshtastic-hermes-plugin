@@ -49,11 +49,11 @@ SEND_TEXT = {
         "Requires the recipient's key to be known to the radio (firmware 2.5+).\n"
         "- Direct to a node WITHOUT pki is refused: it is only channel-PSK encrypted, so "
         "every holder of that channel's key can read it.\n"
-        "- CHANNEL BROADCASTS are refused unless the operator has enabled them "
-        "(MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST) and listed the channel in "
-        "MESHTASTIC_TOOL_SEND_CHANNELS; the Primary channel additionally needs "
-        "MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY, because its key is public on a default "
-        "radio. There is NO default channel: a broadcast must name one.\n"
+        "- CHANNEL BROADCASTS are refused unless the operator listed the target "
+        "channel in MESHTASTIC_TOOL_SEND_CHANNELS — that one setting is the whole "
+        "permission. The Primary channel counts as listed only when named outright, "
+        "never via 'all', because its key is public on a default radio. There is NO "
+        "default channel: a broadcast must name one.\n"
         "- This policy is configured separately from the gateway's automatic-reply "
         "policy; being allowed to reply on a channel does not allow sending there."
     ),
@@ -70,6 +70,33 @@ SEND_TEXT = {
             "ack_timeout": {"type": "number", "description": "Seconds to wait for the ack when wait_ack is set (default 15)."},
         },
         "required": ["text"],
+    },
+}
+
+MESHAGATCHI_EVENT = {
+    "name": "meshagatchi_submit_event",
+    "description": (
+        "Submit one structured, on-box Meshagatchi event. Use numeric deltas only "
+        "for hunger, happiness, training, health, energy, or weight; never use set "
+        "operations or expose this as a public mesh command. The Meshagatchi service "
+        "validates bounds, deduplicates event_id, and may schedule execute_at in UTC."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "event_id": {"type": "string", "description": "Unique id for idempotency."},
+            "description": {"type": "string", "description": "Arbitrary event description, max 180 UTF-8 bytes."},
+            "effects": {
+                "type": "array", "maxItems": 6,
+                "items": {"type": "object", "properties": {
+                    "property": {"type": "string", "enum": ["hunger", "happiness", "training", "health", "energy", "weight"]},
+                    "delta": {"type": "number"},
+                }, "required": ["property", "delta"], "additionalProperties": False},
+            },
+            "execute_at": {"type": "string", "description": "Optional future UTC ISO-8601 timestamp; one-time only."},
+        },
+        "required": ["event_id", "description", "effects"],
+        "additionalProperties": False,
     },
 }
 

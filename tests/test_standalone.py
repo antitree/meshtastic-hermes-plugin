@@ -9,7 +9,7 @@ from meshtastic_hermes.__main__ import build_registry, main, repl_command
 
 def test_registry_wires_everything():
     ctx = build_registry()
-    assert len(ctx.tools) == 12
+    assert len(ctx.tools) == 13
     # both lifecycle hooks registered
     assert "on_session_start" in ctx.hooks
     assert "on_session_end" in ctx.hooks
@@ -42,7 +42,7 @@ def test_list_command(capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "meshtastic_connect" in out
-    assert "12 tools" in out
+    assert "13 tools" in out
 
 
 def test_repl_dispatches_offline_tools(capsys, monkeypatch):
@@ -90,11 +90,11 @@ def test_repl_kb_query_verbs_offline(monkeypatch):
     # neighbors requires a node_id
     assert "usage: neighbors" in repl_command(ctx, "neighbors")
     # neighbors <node> -> kb_neighbors (offline KB works, returns the node + list)
-    out = repl_command(ctx, "neighbors !a696579c")
-    assert '"node_id": "!a696579c"' in out and '"neighbors"' in out
+    out = repl_command(ctx, "neighbors !deadbeef")
+    assert '"node_id": "!deadbeef"' in out and '"neighbors"' in out
     # interactions [node] [since] -> kb_interactions
     assert '"interactions"' in repl_command(ctx, "interactions")
-    assert '"interactions"' in repl_command(ctx, "interactions !a696579c 1000")
+    assert '"interactions"' in repl_command(ctx, "interactions !deadbeef 1000")
     assert "since_unix_ts" in repl_command(ctx, "interactions !a notanumber")
     # kbnodes [sort] -> kb_nodes
     assert '"nodes"' in repl_command(ctx, "kbnodes packets")
@@ -105,7 +105,7 @@ def test_repl_dm_is_pki_no_channel():
     assert "usage: dm" in repl_command(ctx, "dm")
     # dm needs only node + text (no channel); offline -> not connected proves it
     # reached the send tool.
-    assert "Not connected" in repl_command(ctx, "dm !444a8c86 hi there")
+    assert "Not connected" in repl_command(ctx, "dm !feedface hi there")
 
 
 def test_send_text_pki_requires_dest():

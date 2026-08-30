@@ -16,7 +16,7 @@ from . import schemas, tools
 from .connection import get_manager
 from .observer import get_observer
 
-__version__ = "0.1.13"
+__version__ = "0.1.14"
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,7 @@ _TOOLS = [
     (schemas.CONNECT, tools.connect),
     (schemas.DISCONNECT, tools.disconnect),
     (schemas.SEND_TEXT, tools.send_text),
+    (schemas.MESHAGATCHI_EVENT, tools.meshagatchi_submit_event),
     (schemas.RECENT_MESSAGES, tools.recent_messages),
     (schemas.LIST_NODES, tools.list_nodes),
     (schemas.NODE_INFO, tools.node_info),

@@ -24,6 +24,8 @@ from meshtastic_hermes import gateway_bridge as gb
 
 TOOL_SEND_ENV = (
     "MESHTASTIC_TOOL_SEND_CHANNELS",
+    # Removed in 0.2.0, still cleared: a stale value in the developer's own shell
+    # must not change any outcome here, which is itself part of the contract.
     "MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY",
     "MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST",
 )
@@ -114,7 +116,6 @@ def test_rejected_send_never_reaches_senddata(iface):
 
 def test_send_text_does_not_default_the_channel_to_zero(iface, monkeypatch):
     """No implicit channel 0. Broadcasting must be an explicit, named decision."""
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
     data = _data(tools.send_text({"text": "hi"}))
     # Even with broadcasting fully enabled, an unspecified channel is an error,
@@ -135,44 +136,83 @@ def test_pki_dm_still_works(iface):
     assert kw["pkiEncrypted"] is True
 
 
-def test_broadcast_requires_the_explicit_broadcast_setting(iface, monkeypatch):
-    # Channel allowlisted, but the broadcast switch is off -> refused.
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
+def test_the_channel_allowlist_is_the_whole_broadcast_permission(iface, monkeypatch):
+    """One variable. Naming a channel is what authorizes sending to it.
+
+    This is the regression for the consolidation: there used to be a second switch
+    that also had to be on, so the common misconfiguration was an allowlist that
+    named the right channel and still refused every send.
+    """
+    # Nothing configured -> DM-only, broadcasts refused.
     data = _data(tools.send_text({"text": "hi", "channel_name": "in.secure"}))
     assert data["code"] == "broadcast_disabled"
     assert iface.sent == []
 
-    # Switch on -> allowed.
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
+    # Naming the channel is the ONLY thing needed.
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
     data = _data(tools.send_text({"text": "hi", "channel_name": "in.secure"}))
     assert data["sent"] is True
     assert iface.sent[0][1]["channelIndex"] == 1
 
 
-def test_broadcast_requires_the_channel_to_be_allowlisted(iface, monkeypatch):
+def test_removed_broadcast_switch_neither_enables_nor_blocks(iface, monkeypatch):
+    """A stale MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST is inert, not authoritative.
+
+    Both directions matter: on its own it must not open broadcasting (that would be
+    the old sharp edge surviving), and set alongside a real allowlist it must not
+    block one either.
+    """
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
+    data = _data(tools.send_text({"text": "hi", "channel_name": "in.secure"}))
+    assert data["code"] == "broadcast_disabled"
+    assert iface.sent == []
+
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
+    data = _data(tools.send_text({"text": "hi", "channel_name": "in.secure"}))
+    assert data["sent"] is True
+
+
+def test_broadcast_requires_the_channel_to_be_allowlisted(iface, monkeypatch):
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
     data = _data(tools.send_text({"text": "hi", "channel_name": "ops"}))
     assert data["code"] == "channel_not_allowed"
     assert iface.sent == []
 
 
-def test_primary_needs_its_own_setting(iface, monkeypatch):
-    """Primary is allowlisted and broadcasting is on — still refused without the flag."""
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
+def test_primary_is_authorized_by_naming_it(iface, monkeypatch):
+    """Naming Primary is the Primary opt-in — no separate flag involved."""
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "Primary")
-    data = _data(tools.send_text({"text": "hi", "channel_index": 0}))
-    assert data["code"] == "primary_not_allowed"
-    assert iface.sent == []
-
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY", "true")
     data = _data(tools.send_text({"text": "hi", "channel_index": 0}))
     assert data["sent"] is True
     assert iface.sent[0][1]["channelIndex"] == 0
 
 
+def test_wildcard_does_not_cover_primary(iface, monkeypatch):
+    """`all` means every channel the operator set up — not the public one.
+
+    This is the carve-out that replaces the old MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY
+    flag: a wildcard must never be a way to transmit in the clear by accident.
+    """
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "all")
+
+    # Private channels: allowed by the wildcard.
+    data = _data(tools.send_text({"text": "hi", "channel_name": "in.secure"}))
+    assert data["sent"] is True
+
+    # Primary: refused, despite the wildcard.
+    data = _data(tools.send_text({"text": "hi", "channel_index": 0}))
+    assert data["code"] == "primary_not_allowed"
+    assert len(iface.sent) == 1, "the wildcard let a send onto the public Primary"
+
+
+def test_primary_named_alongside_a_wildcard_is_allowed(iface, monkeypatch):
+    """`all,Primary` is an explicit naming, so it opens Primary too."""
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "all,Primary")
+    data = _data(tools.send_text({"text": "hi", "channel_index": 0}))
+    assert data["sent"] is True
+
+
 def test_allowing_a_private_channel_does_not_allow_primary(iface, monkeypatch):
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
     data = _data(tools.send_text({"text": "hi", "channel_index": 0}))
     # Primary is not on the allowlist at all, so it fails before the Primary flag.
@@ -191,7 +231,6 @@ def test_reply_policy_does_not_authorize_tool_sends(iface, monkeypatch):
 
 def test_names_resolve_against_the_radio_channel_table(iface, monkeypatch):
     """The allowlist NAME is matched to an index from the radio, not guessed."""
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "ops")
     data = _data(tools.send_text({"text": "hi", "channel_name": "ops"}))
     assert data["sent"] is True
@@ -209,7 +248,6 @@ def test_names_resolve_against_the_radio_channel_table(iface, monkeypatch):
 
 
 def test_unknown_channel_name_is_refused(iface, monkeypatch):
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
     data = _data(tools.send_text({"text": "hi", "channel_name": "nope"}))
     assert data["code"] == "unknown_channel"
@@ -242,9 +280,8 @@ def test_registered_handler_enforces_the_policy(iface, monkeypatch):
 
     # The model is told about the policy, so it does not assume free sends.
     description = entry["schema"]["description"]
-    assert "MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST" in description
     assert "MESHTASTIC_TOOL_SEND_CHANNELS" in description
-    assert "MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY" in description
+    assert "Primary" in description  # the wildcard carve-out is stated to the model
 
     data = _data(handler({"text": "hi"}))
     assert data["code"] == "broadcast_disabled"
@@ -287,7 +324,6 @@ def test_validate_tool_send_rejects_pki_without_dest():
 
 
 def test_validate_tool_send_rejects_bogus_channel_index(monkeypatch):
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
     for bad in ("abc", -1, None.__class__, True):
         with pytest.raises(policy.ToolSendRejected) as exc:
@@ -300,7 +336,6 @@ def test_numeric_tool_send_channels_warn_like_reply_channels(monkeypatch, caplog
 
     This mirrors the MESHTASTIC_REPLY_CHANNELS behavior deliberately.
     """
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "1")
     with caplog.at_level("WARNING", logger=policy.logger.name):
         target = policy.validate_tool_send({"channel_index": 1}, TABLE)
@@ -310,21 +345,42 @@ def test_numeric_tool_send_channels_warn_like_reply_channels(monkeypatch, caplog
 
 
 def test_names_are_not_warned_about(monkeypatch, caplog):
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
     with caplog.at_level("WARNING", logger=policy.logger.name):
         policy.validate_tool_send({"channel_name": "in.secure"}, TABLE)
     assert "SLOT" not in caplog.text
 
 
-def test_flags_fail_closed_on_typos(monkeypatch):
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "ture")
+def test_broadcast_permission_tracks_the_allowlist_only(monkeypatch):
+    """`allow_broadcast()` is derived from the allowlist now, not from a flag.
+
+    Nothing else can turn it on — including the removed flags, at any spelling.
+    """
     assert policy.allow_broadcast() is False
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY", "yesplease")
-    assert policy.allow_primary() is False
-    for truthy in ("1", "true", "YES", "on"):
-        monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", truthy)
-        assert policy.allow_broadcast() is True
+
+    for stale in (
+        "MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST",
+        "MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY",
+    ):
+        monkeypatch.setenv(stale, "true")
+    assert policy.allow_broadcast() is False, "a removed flag still grants broadcast"
+
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
+    assert policy.allow_broadcast() is True
+
+    # Empty / whitespace is "unset", not "everything".
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "   ")
+    assert policy.allow_broadcast() is False
+
+
+def test_stale_removed_vars_are_warned_about(monkeypatch, caplog):
+    """Silence would strand an operator whose .env still carries the old switch."""
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
+    with caplog.at_level("WARNING", logger="meshtastic_hermes.policy"):
+        policy.tool_send_channel_spec()
+    assert "MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST" in caplog.text
+    assert "no longer used" in caplog.text
+    assert "MESHTASTIC_TOOL_SEND_CHANNELS" in caplog.text
 
 
 def test_allowed_tool_send_channels_uses_all_sentinel(monkeypatch):
@@ -333,7 +389,6 @@ def test_allowed_tool_send_channels_uses_all_sentinel(monkeypatch):
 
 
 def test_all_channels_still_does_not_bypass_the_primary_flag(monkeypatch):
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "all")
     with pytest.raises(policy.ToolSendRejected) as exc:
         policy.validate_tool_send({"channel_index": 0}, TABLE)
@@ -344,7 +399,6 @@ def test_all_channels_still_does_not_bypass_the_primary_flag(monkeypatch):
 
 def test_primary_alias_resolves_to_the_unnamed_primary(monkeypatch):
     """"Primary"/"LongFast" target an UNNAMED primary — reusing gateway_bridge's rule."""
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "Primary")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY", "true")
     target = policy.validate_tool_send({"channel_name": "Primary"}, TABLE)
@@ -353,7 +407,6 @@ def test_primary_alias_resolves_to_the_unnamed_primary(monkeypatch):
 
 def test_validate_tool_send_is_pure(monkeypatch):
     """It must not transmit or mutate: safe to call before touching the radio."""
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "ops")
     table = [dict(row) for row in TABLE]
     args = {"text": "hi", "channel_name": "ops"}
@@ -364,7 +417,6 @@ def test_validate_tool_send_is_pure(monkeypatch):
 
 def test_empty_channel_table_fails_closed(monkeypatch):
     """Disconnected (or a radio that reports nothing): names cannot resolve."""
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
     with pytest.raises(policy.ToolSendRejected) as exc:
         policy.validate_tool_send({"channel_name": "in.secure"}, [])

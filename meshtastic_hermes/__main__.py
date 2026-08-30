@@ -12,8 +12,8 @@ flows (connect once, then send/read), or `observe` for a one-shot capture.
 Usage:
     python -m meshtastic_hermes list
     python -m meshtastic_hermes call meshtastic_kb_summary
-    python -m meshtastic_hermes repl 192.168.55.73
-    python -m meshtastic_hermes observe 192.168.55.73 30
+    python -m meshtastic_hermes repl 192.0.2.10
+    python -m meshtastic_hermes observe 192.0.2.10 30
 """
 
 from __future__ import annotations

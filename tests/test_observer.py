@@ -16,10 +16,10 @@ def _obs() -> Observer:
 
 def test_pki_dm_text_is_surfaced():
     obs = _obs()
-    # Mirrors the live capture: from=!a696579c to=!0aca4a9c, decoded TEXT, no channel.
+    # Mirrors the live capture: from=!deadbeef to=!cafebabe, decoded TEXT, no channel.
     packet = {
-        "fromId": "!a696579c",
-        "toId": "!0aca4a9c",
+        "fromId": "!deadbeef",
+        "toId": "!cafebabe",
         "from": 0xA696579C,
         "to": 0x0ACA4A9C,
         "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": "Claude", "payload": b"Claude"},
@@ -32,8 +32,8 @@ def test_pki_dm_text_is_surfaced():
     msgs = obs.recent_messages()
     assert len(msgs) == 1
     assert msgs[0]["text"] == "Claude"
-    assert msgs[0]["from"] == "!a696579c"
-    assert msgs[0]["to"] == "!0aca4a9c"
+    assert msgs[0]["from"] == "!deadbeef"
+    assert msgs[0]["to"] == "!cafebabe"
 
     # And it is recorded as a readable (non-encrypted) interaction.
     rows = obs.kb.interactions()
@@ -44,7 +44,7 @@ def test_pki_dm_text_is_surfaced():
 def test_undecodable_encrypted_packet_is_metadata_only():
     obs = _obs()
     packet = {
-        "fromId": "!da6fffb8",
+        "fromId": "!b0bafe77",
         "toId": "^all",
         "encrypted": b"\x00\x01\x02\x03",  # no 'decoded' -> we cannot read it
         "channel": 8,

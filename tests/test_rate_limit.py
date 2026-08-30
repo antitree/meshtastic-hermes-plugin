@@ -78,8 +78,7 @@ def iface(monkeypatch):
     rate-limit reasons only — a policy rejection would otherwise mask the limiter and
     make every assertion pass for the wrong reason.
     """
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY", "true")
+    # Naming Primary explicitly is what authorizes it; `all` deliberately would not.
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure,Primary")
 
     fake = FakeIface()
@@ -200,7 +199,7 @@ def test_cooldown_spaces_consecutive_sends_to_one_destination():
     assert exc.value.retry_after_s == pytest.approx(6.0)
 
     # A DIFFERENT peer is not held behind this peer's cooldown.
-    limiter.check(dest_id="!0aca4a9c")
+    limiter.check(dest_id="!cafebabe")
 
     clock.advance(6.0)
     limiter.check(dest_id="!deadbeef")

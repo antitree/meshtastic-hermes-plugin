@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from meshtastic_hermes import gateway_bridge as gb
 
-MY = "!0aca4a9c"
-PEER = "!a696579c"
+MY = "!cafebabe"
+PEER = "!deadbeef"
 
 
 def _dm(text="hi", from_id=PEER):

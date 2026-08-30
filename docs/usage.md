@@ -138,7 +138,7 @@ refused by gate 3, which denies by default. You will see
 `WARNING gateway.run: Unauthorized user: !xxxx on meshtastic` in the log. That is the
 intended out-of-the-box state, not a bug.
 
-A worked minimal config — node short name `REDB`, long name `RED Box`, id `!deadbeef`,
+A worked minimal config — node short name `MESH`, long name `MESHTASTIC Bot`, id `!deadbeef`,
 private channel named `in.secure`:
 
 ```sh
@@ -152,9 +152,9 @@ With that config, on `in.secure`:
 
 | Message from `!deadbeef` on `in.secure` | Result |
 | --- | --- |
-| `REDB weather?` | answered — agent sees `weather?` |
+| `MESH weather?` | answered — agent sees `weather?` |
 | `what is the weather?` | ignored (gate 2: not addressed to this node) |
-| `ask REDB about the weather` | ignored (gate 2: mention is mid-sentence) |
+| `ask MESH about the weather` | ignored (gate 2: mention is mid-sentence) |
 | the same text on the public Primary | ignored (gate 1: channel not allowlisted) |
 | a DM saying `weather?` | answered — DMs skip gates 1 and 2 |
 | the same DM from an unlisted node | refused (gate 3) |
@@ -244,16 +244,16 @@ Details:
 addressed to this node. Gating applies to **channels only**.
 
 On a channel, the message must **start with** this node's short name, long name, or node
-id. Given short name `REDB`, long name `RED Box`, node id `!deadbeef`, all of these are
+id. Given short name `MESH`, long name `MESHTASTIC Bot`, node id `!deadbeef`, all of these are
 answered:
 
 ```
-REDB can you give me the weather?
-redb weather
-ReDb: Weather now
-RED BOX can you give me the weather
-@redb weather
-@RED Box weather now
+MESH can you give me the weather?
+mesh weather
+MeSh: Weather now
+MESHTASTIC BOT can you give me the weather
+@mesh weather
+@MESHTASTIC Bot weather now
 !deadbeef weather
 @!deadbeef weather
 ```
@@ -261,29 +261,29 @@ RED BOX can you give me the weather
 And these are **ignored** — the mention is not at the start, or is not a whole word:
 
 ```
-ask REDB about the weather      # mention mid-sentence
-I think RED Box is offline      # mention mid-sentence
-REDBOX weather                  # longer word that merely starts with "REDB"
+ask MESH about the weather      # mention mid-sentence
+I think MESHTASTIC Bot is offline      # mention mid-sentence
+MESHNET weather                  # longer word that merely starts with "MESH"
 what is the weather?            # no mention at all
 ```
 
 The rules:
 
 - **Case-insensitive** for all three identifiers.
-- An optional leading `@` is accepted (`@redb`, `@RED Box`, `@!deadbeef`).
+- An optional leading `@` is accepted (`@mesh`, `@MESHTASTIC Bot`, `@!deadbeef`).
 - The **node id matches with or without its leading `!`** (`!deadbeef` or `deadbeef`).
 - The mention must be followed by **end-of-string, whitespace, or a `:` / `,`**, which is
-  consumed. This is the word-boundary rule that stops short name `RED` from answering
-  `REDBOX` or `REDDIT`.
+  consumed. This is the word-boundary rule that stops short name `MES` from answering
+  `MESHNET` or `MESHY`.
 - The **long name is matched literally**, spaces and punctuation included — never
-  token-by-token. Names containing regex metacharacters (`R.B`) match only themselves.
-- When several identifiers match, the **longest wins**, so with short name `RED` and long
-  name `RED Box`, `RED Box weather` strips the whole long name rather than leaving
-  `Box weather`.
+  token-by-token. Names containing regex metacharacters (`M.SH`) match only themselves.
+- When several identifiers match, the **longest wins**, so with short name `MESH` and long
+  name `MESHTASTIC Bot`, `MESHTASTIC Bot weather` strips the whole long name rather than leaving
+  `Bot weather`.
 
-**The mention is stripped before the agent sees it.** `REDB weather now` reaches the agent
+**The mention is stripped before the agent sees it.** `MESH weather now` reaches the agent
 as `weather now`, so the agent isn't repeatedly told its own name. A bare mention with
-nothing after it (`REDB`) is still forwarded, with empty text — being called by name is
+nothing after it (`MESH`) is still forwarded, with empty text — being called by name is
 worth a "yes?" rather than silence.
 
 | Env                               | Effect                                                                       |
@@ -322,13 +322,13 @@ only tells Hermes which variables to read (`allowed_users_env`, `allow_all_env` 
 | Env | Effect |
 | --- | --- |
 | _neither set_ **(default)** | Deny everyone. Nothing is answered, not even DMs. |
-| `MESHTASTIC_ALLOWED_USERS="!deadbeef,!0aca4a9c"` | Only these node ids may talk to the agent. |
+| `MESHTASTIC_ALLOWED_USERS="!deadbeef,!cafebabe"` | Only these node ids may talk to the agent. |
 | `MESHTASTIC_ALLOW_ALL_USERS=true` | Any node on the mesh may talk to the agent. |
 
 A sender who fails this gate produces a log line like:
 
 ```
-WARNING gateway.run: Unauthorized user: !a696579c on meshtastic
+WARNING gateway.run: Unauthorized user: !deadbeef on meshtastic
 ```
 
 That line means gates 1 and 2 **passed** — the message was on an allowlisted channel and
@@ -365,9 +365,9 @@ journalctl --user -u hermes-gateway -f          # systemd user service
 What to look for:
 
 ```
-INFO  meshtastic_platform.adapter: Meshtastic adapter connected to 192.0.2.10 (node !0aca4a9c, reply allowed_channels=ChannelSpec(names=('in.secure',), indices=frozenset()))
+INFO  meshtastic_platform.adapter: Meshtastic adapter connected to 192.0.2.10 (node !cafebabe, reply allowed_channels=ChannelSpec(names=('in.secure',), indices=frozenset()))
 INFO  meshtastic_platform.adapter: Meshtastic reply channels resolved: in.secure -> 1
-DEBUG meshtastic_platform.adapter: inbound channel ch=1 from=!a696579c -> REPLY text_len=4 text_sha256=758d61f2
+DEBUG meshtastic_platform.adapter: inbound channel ch=1 from=!deadbeef -> REPLY text_len=4 text_sha256=758d61f2
 INFO  meshtastic_platform.adapter: Meshtastic reply sent to ch:1
 ```
 
@@ -415,7 +415,7 @@ and rotating the logs it produced.
   channel name; indices silently repoint when channels are reordered.
 - `-> skip (policy)` on a channel-1 message → that channel isn't in the allowlist.
 - `-> skip (not addressed to us)` on a channel message → the channel *is* allowlisted, but
-  the text didn't start with a mention of this node. Address it (`REDB ...`) or set
+  the text didn't start with a mention of this node. Address it (`MESH ...`) or set
   `MESHTASTIC_REQUIRE_MENTION=0`. See [Mention gating](#gate-2--mention-gating-channels-only).
 - `mention gating is DEGRADED` / `reported NO identity` → the radio hasn't published its
   `short_name`/`long_name` yet. Node-id mentions still work; name mentions start working
@@ -825,14 +825,14 @@ python -m meshtastic_hermes call meshtastic_kb_summary
 python -m meshtastic_hermes repl 192.0.2.10
 #   meshtastic> channels                         # find the index you want
 #   meshtastic> send 1 hello pommeraie           # broadcast on channel 1 (channel-PSK)
-#   meshtastic> dm !444a8c86 hi there            # private direct message (end-to-end/PKI)
+#   meshtastic> dm !feedface hi there            # private direct message (end-to-end/PKI)
 #   meshtastic> watch 120                         # print incoming messages live (catch replies)
 #   meshtastic> recent 5                          # last 5 decoded messages (RAM buffer)
 #   meshtastic> nodes                             # live radio node DB
 #   meshtastic> kb                                # knowledge-base summary
 #   meshtastic> kbnodes packets                   # KB nodes sorted by packet count
-#   meshtastic> neighbors !a696579c               # inferred direct contacts of a node
-#   meshtastic> interactions !a696579c 1781800000 # interaction metadata (node + since-ts)
+#   meshtastic> neighbors !deadbeef               # inferred direct contacts of a node
+#   meshtastic> interactions !deadbeef 1781800000 # interaction metadata (node + since-ts)
 #   meshtastic> quit                              # type 'help' for all commands
 
 # One-shot: connect, observe live traffic for N seconds, dump nodes + KB
@@ -855,8 +855,8 @@ The `bridge` simulator prints a line per matched message and exits after the win
 (default 300s, or pass a seconds arg; Ctrl-C stops early):
 
 ```
-[inbound DM] !a696579c: 'hello tom'
-  -> reply to !a696579c: 'ack: hello tom'   (dry-run — pass --send to actually transmit)
+[inbound DM] !deadbeef: 'hello tom'
+  -> reply to !deadbeef: 'ack: hello tom'   (dry-run — pass --send to actually transmit)
 ```
 
 Its reply comes from a stub `simulate_reply()` (echo) — replace it with an LLM/webhook to
@@ -1056,3 +1056,13 @@ list`) for verbose discovery logs; ensure it's enabled — `plugins.enabled` in
   Hermes prints a `[HERMES_HOME fallback]` warning to stderr and silently uses the
   `default` profile. Treat that warning as "my env vars are being read from the wrong
   profile".
+
+## Meshagatchi sidecar
+
+Set `MESHTASTIC_MESHAGATCHI_SOCKET` in the profile environment to enable the
+same-user Unix socket used by the deterministic Meshagatchi service. The adapter
+resolves `MESHTASTIC_MESHAGATCHI_CHANNEL` against the live radio channel table
+and enables the bridge only when that exact name is at index `1`. Incoming decoded
+channel messages are forwarded to the socket; outgoing requests are validated and
+sent through the existing MeshHermes `send_text` path and airtime limiter. The
+sidecar never imports the Meshtastic library or opens its own TCP connection.

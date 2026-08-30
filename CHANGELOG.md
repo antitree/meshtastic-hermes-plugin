@@ -2,6 +2,11 @@
 
 All notable changes to this project are recorded here.
 
+## [0.1.14]
+
+- Add the bounded Meshagatchi sidecar protocol, native structured event tool,
+  Hermes LLM proposal/prose bridge, and correlated event forwarding.
+
 The version is bumped by automation, not by hand — see
 `.github/workflows/version-bump.yml` (automatic patch bump on every merged
 PR) and `.github/workflows/release.yml` (manual minor release). Both call

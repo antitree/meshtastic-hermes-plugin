@@ -176,8 +176,7 @@ def _env(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     # Item 1's policy is opened deliberately so these tests can only fail for
     # rate-limit reasons, never because a broadcast was refused by policy.
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY", "true")
+    # Naming Primary explicitly is what authorizes it; `all` deliberately would not.
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure,Primary")
 
 
@@ -350,7 +349,7 @@ def test_adapter_send_then_tool_send_share_one_limiter(adapter_mod, monkeypatch,
     clock.advance(1.0)
     out = json.loads(
         tools.send_text(
-            {"text": "hi", "dest_id": "!0aca4a9c", "pki": True, "wait_ack": False}
+            {"text": "hi", "dest_id": "!cafebabe", "pki": True, "wait_ack": False}
         )
     )
     assert out["error"] == rate_limit.RATE_LIMITED

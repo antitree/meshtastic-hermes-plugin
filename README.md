@@ -152,7 +152,7 @@ Put them wherever the Hermes process will read them: `$HERMES_HOME/.env` (see
 | `MESHTASTIC_REPLY_ALL` | _unset_ (off) | `1`/`true`/`yes` = the gateway may reply on **every** channel, including the public Primary. Overrides `MESHTASTIC_REPLY_CHANNELS`. |
 | `MESHTASTIC_REPLY_CHANNELS` | _unset_ (DMs only) | Comma-separated channel **names** the gateway may reply on, e.g. `in.secure`. `all` means every channel. Numeric indices work but are legacy and unsafe — see [Use channel names, not indices](docs/usage.md#use-channel-names-not-indices). |
 | `MESHTASTIC_REQUIRE_MENTION` | _unset_ (**on**) | When on, a **channel** message is answered only if it starts with this node's name or id. `0`/`false`/`no` turns it off. DMs are always answered either way. |
-| `MESHTASTIC_ALLOWED_USERS` | _unset_ | Comma-separated node ids permitted to talk to the agent, e.g. `!deadbeef,!0aca4a9c`. Enforced by Hermes' gateway, not by this plugin. |
+| `MESHTASTIC_ALLOWED_USERS` | _unset_ | Comma-separated node ids permitted to talk to the agent, e.g. `!deadbeef,!cafebabe`. Enforced by Hermes' gateway, not by this plugin. |
 | `MESHTASTIC_ALLOW_ALL_USERS` | _unset_ (off) | `true` lets any node on the mesh talk to the agent. With neither this nor `MESHTASTIC_ALLOWED_USERS`, the gateway **denies everyone**. |
 | `MESHTASTIC_EXPOSE_LOCATION` | _unset_ (off) | `1`/`true`/`yes`/`on` lets the read tools return `lat`/`lon`/`altitude`. Off by default: these are real-world locations of real people on a shared mesh, and of this gateway's operator. Applies to the live radio node DB **and** the KB's own stored coordinates. |
 | `MESHTASTIC_EXPOSE_RECENT_TEXT` | _unset_ (off) | `1`/`true`/`yes`/`on` lets `meshtastic_recent_messages` return message **bodies**. Off by default: rows carry sender, channel, timestamp, `text_len` and a short `text_sha256` instead. |
@@ -187,13 +187,13 @@ they still face gate 3, so a DM from an unlisted node is refused by Hermes with
 
 Out of the box, then, the gateway answers **nothing**: DMs are allowed by the reply
 policy but denied by the sender allowlist. That is deliberate. A minimal working config
-for a node with short name `REDB` on a private channel named `in.secure`:
+for a node with short name `MESH` on a private channel named `in.secure`:
 
 ```sh
 MESHTASTIC_HOST=192.0.2.10
 MESHTASTIC_REPLY_CHANNELS=in.secure     # gate 1: DMs + that named channel
 MESHTASTIC_ALLOWED_USERS=!deadbeef      # gate 3: this node may talk to the agent
-# gate 2 is left at its default, so on in.secure the bot answers "REDB weather"
+# gate 2 is left at its default, so on in.secure the bot answers "MESH weather"
 # but ignores "what's the weather?"
 ```
 
@@ -249,9 +249,9 @@ and [docs/usage.md](docs/usage.md#the-three-gates) for the worked detail.
   silently repoints it and replies can go out on the wrong channel. Names are re-resolved
   against the radio on every connect. See [docs/usage.md](docs/usage.md#use-channel-names-not-indices).
 - **Mention gating (gate 2, default on):** on a **channel**, the bot only answers a message that
-  **starts with** its own short name, long name, or node id — `REDB weather`, `redb:
-  weather`, `@RED Box weather`, `!deadbeef weather` (case-insensitive, optional `@`, node
-  id with or without `!`). A mention mid-sentence (`ask REDB about the weather`) does not
+  **starts with** its own short name, long name, or node id — `MESH weather`, `mesh:
+  weather`, `@MESHTASTIC Bot weather`, `!deadbeef weather` (case-insensitive, optional `@`, node
+  id with or without `!`). A mention mid-sentence (`ask MESH about the weather`) does not
   count, and the mention is stripped before the agent sees the text. **Direct messages are
   always answered** and never need a mention. Without this, an allowlisted channel means
   replying to *every* message on it — including another bot's, which is how two bots
@@ -332,12 +332,12 @@ python -m meshtastic_hermes bridge 192.0.2.10 --all
 It prints a line per matched message, e.g.:
 
 ```
-[inbound DM] !a696579c: 'hello tom'
-  -> reply to !a696579c: 'ack: hello tom'   (dry-run — pass --send to actually transmit)
+[inbound DM] !deadbeef: 'hello tom'
+  -> reply to !deadbeef: 'ack: hello tom'   (dry-run — pass --send to actually transmit)
 ```
 
 The simulator's `simulate_reply()` is a stub echo — swap it for an LLM/webhook to
-prototype an autonomous mesh bot before wiring up the full Hermes adapter. See
+prototype an autonomous meshtastic bot before wiring up the full Hermes adapter. See
 [docs/usage.md](docs/usage.md) for the full walkthrough.
 
 ## Development

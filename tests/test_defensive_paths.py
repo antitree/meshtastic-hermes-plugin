@@ -135,4 +135,4 @@ def test_module_is_runnable_as_python_dash_m():
         cwd=str(__import__("pathlib").Path(__file__).parent.parent),
     )
     assert result.returncode == 0, result.stderr
-    assert "12 tools" in result.stdout
+    assert "13 tools" in result.stdout

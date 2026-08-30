@@ -83,10 +83,10 @@ def test_close_locked_preserves_target_host(monkeypatch):
     # Regression: _close_locked must NOT clear _host/_port — _open() reads them right
     # after calling _close_locked(), so nulling them made it connect to None.
     mgr = connection.ConnectionManager()
-    mgr._host = "192.168.55.73"
+    mgr._host = "192.0.2.10"
     mgr._port = 4403
     mgr._close_locked()
-    assert mgr._host == "192.168.55.73"
+    assert mgr._host == "192.0.2.10"
     assert mgr._port == 4403
 
 
@@ -145,7 +145,7 @@ def test_supervisor_lifecycle(monkeypatch):
 def test_broadcast_uses_senddata_no_ack_wait(monkeypatch):
     # Tool broadcasts are refused unless the operator opts in (remediation item 1);
     # this test is about the SEND mechanics, so grant the permission explicitly.
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
+    # Naming the channel IS the permission — there is no second switch.
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
     fake = _inject(monkeypatch, FakeIface())
     res = json.loads(tools.send_text({"text": "hi", "channel_index": 1}))
@@ -164,12 +164,12 @@ def test_broadcast_uses_senddata_no_ack_wait(monkeypatch):
 
 def test_dm_pki_waits_and_reports_delivered(monkeypatch):
     fake = _inject(monkeypatch, FakeIface(ack_reason="NONE"))
-    res = json.loads(tools.send_text({"text": "secret", "dest_id": "!a696579c", "pki": True}))
+    res = json.loads(tools.send_text({"text": "secret", "dest_id": "!deadbeef", "pki": True}))
     assert res["encryption"] == "pki"
     assert res["ack"]["status"] == "delivered"
     data, kw = fake.sendData_calls[0]
     assert data == b"secret"
-    assert kw["destinationId"] == "!a696579c"
+    assert kw["destinationId"] == "!deadbeef"
     assert kw["pkiEncrypted"] is True
     assert kw["wantAck"] is True
     assert kw["onResponseAckPermitted"] is True
@@ -177,7 +177,7 @@ def test_dm_pki_waits_and_reports_delivered(monkeypatch):
 
 def test_dm_reports_failure_on_nak(monkeypatch):
     _inject(monkeypatch, FakeIface(ack_reason="MAX_RETRANSMIT"))
-    res = json.loads(tools.send_text({"text": "x", "dest_id": "!a696579c", "pki": True}))
+    res = json.loads(tools.send_text({"text": "x", "dest_id": "!deadbeef", "pki": True}))
     assert res["ack"]["status"] == "failed"
     assert res["ack"]["reason"] == "MAX_RETRANSMIT"
 
@@ -186,7 +186,7 @@ def test_dm_reports_no_ack_on_timeout(monkeypatch):
     _inject(monkeypatch, FakeIface(ack_reason=None))  # never acks
     res = json.loads(
         tools.send_text(
-            {"text": "x", "dest_id": "!a696579c", "pki": True, "ack_timeout": 0.1}
+            {"text": "x", "dest_id": "!deadbeef", "pki": True, "ack_timeout": 0.1}
         )
     )
     assert res["ack"]["status"] == "no_ack"
@@ -194,7 +194,6 @@ def test_dm_reports_no_ack_on_timeout(monkeypatch):
 
 
 def test_want_ack_false_disables_reliability(monkeypatch):
-    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST", "true")
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
     fake = _inject(monkeypatch, FakeIface())
     res = json.loads(

@@ -360,7 +360,7 @@ def test_repl_loop_tolerates_an_unwritable_history_file(ctx, monkeypatch):
 def test_repl_loop_tools_listing(ctx, monkeypatch, capsys):
     _drive_repl(monkeypatch, ["tools", "quit"])
     m._cmd_repl(ctx, types.SimpleNamespace(host=None))
-    assert "12 tools" in capsys.readouterr().out
+    assert "13 tools" in capsys.readouterr().out
 
 
 # ----------------------------------------------------------------------

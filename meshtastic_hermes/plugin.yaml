@@ -1,5 +1,5 @@
 name: meshtastic
-version: "0.1.13"
+version: "0.1.14"
 description: >-
   Interact with a Meshtastic LoRa mesh over TCP/IP — send messages, inspect
   nodes/channels, and build a persistent node-interaction knowledge base from
@@ -10,6 +10,7 @@ provides_tools:
   - meshtastic_connect
   - meshtastic_disconnect
   - meshtastic_send_text
+  - meshagatchi_submit_event
   - meshtastic_recent_messages
   - meshtastic_list_nodes
   - meshtastic_node_info
@@ -52,14 +53,23 @@ optional_env:
   # by the model, which picks the text, the channel, and the moment with none of
   # those gates in the path. Reply configuration therefore never authorizes a tool
   # send. Default: PKI direct messages only.
-  - name: MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST
-    description: "Set to true to let meshtastic_send_text originate channel broadcasts at all. Default: false (the tool sends PKI direct messages only). Only an explicit truthy value (1/true/yes/on) enables it, so a typo fails closed."
-    secret: false
+  #
+  # This is ONE variable on purpose. It previously took three that all had to agree
+  # (ALLOW_BROADCAST + CHANNELS + ALLOW_PRIMARY), whose usual outcome was a config
+  # that named a channel and still refused to transmit. The allowlist IS the
+  # permission now: name a channel and the tool may send there.
   - name: MESHTASTIC_TOOL_SEND_CHANNELS
-    description: "Comma-separated channel NAMES meshtastic_send_text may transmit on, e.g. 'in.secure' or 'in.secure,ops'. Same grammar and resolution as MESHTASTIC_REPLY_CHANNELS, but a separate setting: names are resolved against the radio's channel table on every send, numeric indices are legacy and warn (an index is a SLOT, not a channel identity), and 'all' means every channel. Unset means no channel broadcast is allowed."
-    secret: false
-  - name: MESHTASTIC_TOOL_SEND_ALLOW_PRIMARY
-    description: "Set to true to allow meshtastic_send_text on the PRIMARY channel, whose pre-shared key is public on a default radio. Required IN ADDITION to MESHTASTIC_TOOL_SEND_ALLOW_BROADCAST and a matching MESHTASTIC_TOOL_SEND_CHANNELS entry. Default: false."
+    description: >-
+      Comma-separated channel NAMES meshtastic_send_text may transmit on, e.g.
+      'in.secure' or 'in.secure,ops'. This single setting is the whole broadcast
+      permission: unset means the tool sends PKI direct messages only, and any
+      non-empty allowlist authorizes exactly the channels it names. Same grammar and
+      resolution as MESHTASTIC_REPLY_CHANNELS but a SEPARATE setting — names are
+      resolved against the radio's channel table on every send, and numeric indices
+      are legacy and warn (an index is a SLOT, not a channel identity). 'all' covers
+      every channel EXCEPT the public Primary, which is authorized only by naming it
+      explicitly ('Primary', or its real name if it has one) because its pre-shared
+      key is public on a default radio.
     secret: false
   # Transmit rate limiting — the airtime LOOP BREAKER. LoRa is a shared, legally
   # regulated medium, and nothing else bounds how much this node emits: the adapter
