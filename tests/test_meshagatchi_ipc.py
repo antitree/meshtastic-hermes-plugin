@@ -37,6 +37,14 @@ async def test_ipc_forwards_channel_one_and_routes_send(adapter_mod, monkeypatch
     assert hello["channel_name"] == "in.secure"
 
     writer.write((json.dumps({
+        "op": "register", "id": "r1", "version": 1, "role": "meshagatchi",
+        "channel_name": "in.secure", "channel_index": 1, "pet_name": "Meshagatchi",
+        "max_command_hops": 1, "benign_min_hops": 2, "benign_max_hops": 3,
+    }) + "\n").encode())
+    await writer.drain()
+    assert json.loads((await reader.readline()).decode())["ok"] is True
+
+    writer.write((json.dumps({
         "op": "send", "text": "reply", "channel_name": "in.secure", "channel_index": 1,
     }) + "\n").encode())
     await writer.drain()
@@ -44,8 +52,8 @@ async def test_ipc_forwards_channel_one_and_routes_send(adapter_mod, monkeypatch
     assert sent == [("ch:1", "reply")]
 
     await adapter._publish_meshagatchi({
-        "text": "/status", "from_id": "!user", "message_id": "42",
-        "is_dm": False, "channel": 1,
+        "text": "@Meshagatchi /status", "from_id": "!user", "message_id": "42",
+        "is_dm": False, "channel": 1, "hops": 0,
     })
     event = json.loads((await reader.readline()).decode())
     assert event["type"] == "message"
@@ -74,7 +82,9 @@ async def test_event_request_is_forwarded_to_registered_sidecar(adapter_mod, mon
     await bot_reader.readline()
     bot_writer.write((json.dumps({"op": "register", "id": "r1", "version": 1,
                                   "role": "meshagatchi", "channel_name": "in.secure",
-                                  "channel_index": 1}) + "\n").encode())
+                                  "channel_index": 1, "pet_name": "Meshagatchi",
+                                  "max_command_hops": 1, "benign_min_hops": 2,
+                                  "benign_max_hops": 3}) + "\n").encode())
     await bot_writer.drain()
     assert json.loads(await bot_reader.readline())["ok"] is True
 
@@ -98,6 +108,56 @@ async def test_event_request_is_forwarded_to_registered_sidecar(adapter_mod, mon
     bot_writer.close()
     await tool_writer.wait_closed()
     await bot_writer.wait_closed()
+    await adapter.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_meshagatchi_filter_requires_trigger_and_hop_tier(adapter_mod, monkeypatch, tmp_path):
+    socket_path = tmp_path / "meshagatchi.sock"
+    monkeypatch.setenv("MESHTASTIC_MESHAGATCHI_SOCKET", str(socket_path))
+    monkeypatch.setenv("MESHTASTIC_MESHAGATCHI_CHANNEL", "in.secure")
+    manager = _FakeManager(channels=[
+        {"index": 0, "name": "", "role": 1},
+        {"index": 1, "name": "in.secure", "role": 2},
+    ])
+    _patch_manager(monkeypatch, manager)
+    adapter = _make(adapter_mod, monkeypatch)
+    await adapter.connect()
+    reader, writer = await asyncio.open_unix_connection(str(socket_path))
+    await reader.readline()
+    writer.write((json.dumps({
+        "op": "register", "id": "r1", "version": 1, "role": "meshagatchi",
+        "channel_name": "in.secure", "channel_index": 1, "pet_name": "BoneMurder",
+        "max_command_hops": 1, "benign_min_hops": 2, "benign_max_hops": 3,
+    }) + "\n").encode())
+    await writer.drain()
+    assert json.loads(await reader.readline())["ok"] is True
+
+    async def publish(text, hops):
+        await adapter._publish_meshagatchi({
+            "text": text, "from_id": "!user", "message_id": str(hops),
+            "is_dm": False, "channel": 1, "hops": hops,
+        })
+
+    async def no_message():
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(reader.readline(), 0.03)
+
+    await publish("/ping", 0)
+    await no_message()
+    await publish("@BoneMurder /feed cookie", 2)
+    await no_message()
+    await publish("@BoneMurder /ping", 2)
+    benign = json.loads(await asyncio.wait_for(reader.readline(), 1))
+    assert benign["text"] == "/ping"
+    assert benign["hops"] == 2
+    await publish("@BoneMurder /feed cookie", 1)
+    full = json.loads(await asyncio.wait_for(reader.readline(), 1))
+    assert full["text"] == "/feed cookie"
+    assert full["raw_text"] == "@BoneMurder /feed cookie"
+
+    writer.close()
+    await writer.wait_closed()
     await adapter.disconnect()
 
 

@@ -69,7 +69,34 @@ def inbound_from_packet(packet: dict, my_node_id: str | None) -> dict | None:
         "channel": packet.get("channel") or 0,
         "is_dm": is_dm,
         "message_id": str(packet.get("id") or ""),
+        "hops": hops_from_packet(packet),
     }
+
+
+def hops_from_packet(packet: dict) -> int | None:
+    """Return hops already travelled, or None when the packet cannot prove it."""
+    start = packet.get("hopStart")
+    remaining = packet.get("hopLimit")
+    if isinstance(start, bool) or isinstance(remaining, bool):
+        return None
+    if not isinstance(start, int) or not isinstance(remaining, int):
+        return None
+    hops = start - remaining
+    if start < 0 or remaining < 0 or hops < 0 or hops > start:
+        return None
+    return hops
+
+
+def match_meshagatchi_trigger(text: str, pet_name: str) -> str | None:
+    """Match an exact ``@pet_name`` prefix and return the command remainder."""
+    text = (text or "").strip()
+    trigger = f"@{pet_name}"
+    if not text.casefold().startswith(trigger.casefold()):
+        return None
+    remainder = text[len(trigger):]
+    if remainder and not (remainder[0].isspace() or remainder[0] in ":,"):
+        return None
+    return remainder.lstrip(" \t:,")
 
 
 def chat_id_for(inbound: dict) -> str:

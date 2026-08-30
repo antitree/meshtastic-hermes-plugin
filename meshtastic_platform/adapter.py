@@ -417,6 +417,7 @@ if _HAVE_GATEWAY:
             self._ipc_write_lock = asyncio.Lock()
             self._ipc_bot_writer: asyncio.StreamWriter | None = None
             self._ipc_forward_waiters: dict[str, asyncio.Future[dict]] = {}
+            self._ipc_meshagatchi_policy: dict | None = None
             self._ipc_request_times: deque[float] = deque()
             self._ipc_socket = (os.getenv("MESHTASTIC_MESHAGATCHI_SOCKET")
                                 or os.getenv("MESHTASTIC_IPC_SOCKET") or "").strip()
@@ -646,6 +647,7 @@ if _HAVE_GATEWAY:
                     socket_path.unlink()
             self._ipc_channel_index = None
             self._ipc_bot_writer = None
+            self._ipc_meshagatchi_policy = None
             for future in self._ipc_forward_waiters.values():
                 if not future.done():
                     future.set_exception(ConnectionError("Meshagatchi IPC stopped"))
@@ -698,7 +700,25 @@ if _HAVE_GATEWAY:
                     self._ipc_request_times.append(now)
                     op = request.get("op")
                     if op == "register" and request.get("role") == "meshagatchi":
+                        pet_name = request.get("pet_name")
+                        max_hops = request.get("max_command_hops")
+                        benign_min = request.get("benign_min_hops")
+                        benign_max = request.get("benign_max_hops")
+                        if (not isinstance(pet_name, str) or not pet_name.strip()
+                                or any(isinstance(value, bool) or not isinstance(value, int)
+                                       for value in (max_hops, benign_min, benign_max))
+                                or not 0 <= max_hops <= 3
+                                or not 0 <= benign_min <= benign_max <= 3):
+                            await self._write_meshagatchi(writer, {
+                                "type": "register.result", "id": request.get("id"),
+                                "ok": False, "error": "invalid Meshagatchi command policy",
+                            })
+                            continue
                         self._ipc_bot_writer = writer
+                        self._ipc_meshagatchi_policy = {
+                            "pet_name": pet_name.strip(), "max_hops": max_hops,
+                            "benign_min_hops": benign_min, "benign_max_hops": benign_max,
+                        }
                         await self._write_meshagatchi(writer, {"type": "register.result", "id": request.get("id"), "ok": True})
                         continue
                     envelope_error = ipc.validate_envelope(
@@ -819,9 +839,31 @@ if _HAVE_GATEWAY:
         async def _publish_meshagatchi(self, inbound: dict) -> None:
             if self._ipc_channel_index != 1 or inbound.get("is_dm"):
                 return
+            from meshtastic_hermes import gateway_bridge as gb
             from meshtastic_hermes import ipc
 
-            payload = ipc.message_payload(inbound, self._ipc_channel_name, 1)
+            policy = self._ipc_meshagatchi_policy
+            if policy is None or inbound.get("hops") is None:
+                return
+            hops = inbound["hops"]
+            if hops < 0 or hops > 3:
+                return
+            remainder = gb.match_meshagatchi_trigger(inbound.get("text", ""), policy["pet_name"])
+            if remainder is None:
+                return
+            command = remainder.split(None, 1)[0].lower() if remainder else ""
+            if not command.startswith("/"):
+                return
+            command_name = command[1:]
+            if hops > policy["max_hops"]:
+                if not (policy["benign_min_hops"] <= hops <= policy["benign_max_hops"]
+                        and command_name in {"status", "help", "ping"}):
+                    return
+            gated = dict(inbound)
+            gated["raw_text"] = inbound.get("text", "")
+            gated["text"] = remainder
+
+            payload = ipc.message_payload(gated, self._ipc_channel_name, 1)
             stale = []
             for writer in tuple(self._ipc_clients):
                 try:

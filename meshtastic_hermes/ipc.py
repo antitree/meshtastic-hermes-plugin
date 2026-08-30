@@ -31,6 +31,8 @@ def message_payload(inbound: dict[str, Any], channel_name: str, channel_index: i
         "type": "message", "version": PROTOCOL_VERSION,
         "text": str(inbound.get("text", "")), "sender_id": str(inbound.get("from_id", "")),
         "message_id": str(inbound.get("message_id", "")),
+        "raw_text": str(inbound.get("raw_text", inbound.get("text", ""))),
+        "hops": inbound.get("hops") if isinstance(inbound.get("hops"), int) else None,
         "channel_name": channel_name, "channel_index": channel_index, "is_self": False,
     }
 

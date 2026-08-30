@@ -43,6 +43,25 @@ def test_inbound_channel_chat_id():
     assert gb.chat_id_for(inb) == "ch:1"
 
 
+def test_hops_are_derived_from_start_and_remaining_limit():
+    packet = _channel("hey", channel=1)
+    packet.update({"hopStart": 3, "hopLimit": 2})
+    assert gb.inbound_from_packet(packet, MY)["hops"] == 1
+
+
+def test_hops_are_unknown_when_metadata_is_incomplete():
+    packet = _channel("hey", channel=1)
+    packet["hopLimit"] = 2
+    assert gb.inbound_from_packet(packet, MY)["hops"] is None
+
+
+def test_meshagatchi_trigger_is_exact_and_at_message_start():
+    assert gb.match_meshagatchi_trigger("@BoneMurder /status", "BoneMurder") == "/status"
+    assert gb.match_meshagatchi_trigger("@bonemurder: /ping", "BoneMurder") == "/ping"
+    assert gb.match_meshagatchi_trigger("hello @BoneMurder /status", "BoneMurder") is None
+    assert gb.match_meshagatchi_trigger("@BoneMurdered /status", "BoneMurder") is None
+
+
 def test_ignores_own_messages_and_encrypted_and_nontext():
     assert gb.inbound_from_packet(_dm(from_id=MY), MY) is None  # loop guard
     assert gb.inbound_from_packet({"fromId": PEER, "encrypted": b"\x00"}, MY) is None
