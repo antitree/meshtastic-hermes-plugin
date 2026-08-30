@@ -596,23 +596,22 @@ if _HAVE_GATEWAY:
             """Expose the already-open MeshHermes link to one same-user sidecar."""
             if not self._ipc_socket:
                 return
+            from meshtastic_hermes import gateway_bridge as gb
             from meshtastic_hermes import ipc
 
             if self._ipc_server is not None:
                 await self._stop_meshagatchi_ipc()
 
-            matches = [
-                row for row in (channel_table or [])
-                if row.get("name") == self._ipc_channel_name
-            ]
-            if len(matches) != 1 or int(matches[0].get("index", -1)) != 1:
+            requested = gb.parse_channel_spec(self._ipc_channel_name)
+            allowed, resolved = gb.resolve_channel_spec(requested, channel_table, log=logger)
+            if allowed is None or len(resolved) != 1:
                 logger.error(
-                    "Meshagatchi IPC disabled: %r must resolve to channel index 1 (matches=%s)",
+                    "Meshagatchi IPC disabled: %r did not resolve to exactly one radio channel (resolved=%s)",
                     self._ipc_channel_name,
-                    matches,
+                    resolved,
                 )
                 return
-            self._ipc_channel_index = 1
+            self._ipc_channel_index = next(iter(resolved.values()))
             socket_path = Path(self._ipc_socket).expanduser()
             socket_path.parent.mkdir(parents=True, exist_ok=True)
             if socket_path.exists():
@@ -663,7 +662,8 @@ if _HAVE_GATEWAY:
         ) -> None:
             from meshtastic_hermes import ipc
 
-            if self._ipc_channel_index != 1:
+            channel_index = self._ipc_channel_index
+            if channel_index is None:
                 writer.close()
                 await writer.wait_closed()
                 return
@@ -671,7 +671,7 @@ if _HAVE_GATEWAY:
             try:
                 await self._write_meshagatchi(
                     writer,
-                    ipc.hello_payload(getattr(self.identity, "node_id", None), self._ipc_channel_name, 1),
+                    ipc.hello_payload(getattr(self.identity, "node_id", None), self._ipc_channel_name, channel_index),
                 )
                 while True:
                     line = await reader.readline()
@@ -722,7 +722,7 @@ if _HAVE_GATEWAY:
                         await self._write_meshagatchi(writer, {"type": "register.result", "id": request.get("id"), "ok": True})
                         continue
                     envelope_error = ipc.validate_envelope(
-                        request, channel_name=self._ipc_channel_name, channel_index=1
+                        request, channel_name=self._ipc_channel_name, channel_index=channel_index
                     )
                     # Accept the pre-versioned send shape during rolling upgrades;
                     # every new response still carries a request id and version.
@@ -733,13 +733,16 @@ if _HAVE_GATEWAY:
                         text, error = ipc.validate_send_request(
                             {**request, "version": request.get("version", ipc.PROTOCOL_VERSION),
                              "id": request.get("id", "legacy-send")},
-                            channel_name=self._ipc_channel_name, channel_index=1,
+                            channel_name=self._ipc_channel_name, channel_index=channel_index,
                             max_bytes=min(self._ipc_max_bytes, ipc.DEFAULT_MAX_MESSAGE_BYTES),
                         )
                         if error:
                             await self._write_meshagatchi(writer, {"type": "send_result", "id": request.get("id"), "ok": False, "error": error})
                             continue
-                        result = await self.send("ch:1", text)
+                        result = await self.send(
+                            f"ch:{channel_index}", text,
+                            metadata={"_meshagatchi": True},
+                        )
                         await self._write_meshagatchi(writer, {
                             "type": "send_result", "version": ipc.PROTOCOL_VERSION,
                             "id": request.get("id"), "ok": bool(result.success),
@@ -780,7 +783,7 @@ if _HAVE_GATEWAY:
             await self._write_meshagatchi(writer, {
                 "type": "event.submit", "version": ipc.PROTOCOL_VERSION, "id": request_id,
                 "event": request.get("event"), "channel_name": self._ipc_channel_name,
-                "channel_index": 1,
+                "channel_index": self._ipc_channel_index,
             })
             try:
                 return await asyncio.wait_for(future, 30)
@@ -837,7 +840,7 @@ if _HAVE_GATEWAY:
             return response
 
         async def _publish_meshagatchi(self, inbound: dict) -> None:
-            if self._ipc_channel_index != 1 or inbound.get("is_dm"):
+            if self._ipc_channel_index is None or inbound.get("is_dm"):
                 return
             from meshtastic_hermes import gateway_bridge as gb
             from meshtastic_hermes import ipc
@@ -863,7 +866,7 @@ if _HAVE_GATEWAY:
             gated["raw_text"] = inbound.get("text", "")
             gated["text"] = remainder
 
-            payload = ipc.message_payload(gated, self._ipc_channel_name, 1)
+            payload = ipc.message_payload(gated, self._ipc_channel_name, self._ipc_channel_index)
             stale = []
             for writer in tuple(self._ipc_clients):
                 try:
@@ -882,7 +885,8 @@ if _HAVE_GATEWAY:
                 inbound = gb.inbound_from_packet(packet, self._mgr.my_node_id())
                 if inbound is None:
                     return
-                if not inbound["is_dm"] and inbound.get("channel", 0) == 1 and self._loop:
+                if (not inbound["is_dm"] and self._ipc_channel_index is not None
+                        and inbound.get("channel", 0) == self._ipc_channel_index and self._loop):
                     asyncio.run_coroutine_threadsafe(self._publish_meshagatchi(inbound), self._loop)
                 decision = gb.should_reply(inbound, allowed_channels=self.allowed_channels)
                 reason = "skip (policy)"
@@ -972,7 +976,8 @@ if _HAVE_GATEWAY:
                         # they are not held behind the per-destination reply cooldown,
                         # which spaces conversational turns rather than chunks.
                         "_continuation": continuation,
-                    }
+                    },
+                    channel_spec=self._ipc_channel_name if metadata and metadata.get("_meshagatchi") else None,
                 )
 
             logger.debug("sending reply to chat_id=%s target=%s (%d part(s))", chat_id, target, len(parts))

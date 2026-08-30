@@ -23,8 +23,12 @@ optional_env:
     prompt: "Meshagatchi IPC socket path (or empty)"
     password: false
   - name: MESHTASTIC_MESHAGATCHI_CHANNEL
-    description: "Exact channel name for Meshagatchi IPC; it must resolve to radio channel index 1. Defaults to in.secure."
+    description: "Exact channel name for Meshagatchi IPC; resolved against the radio channel table. Defaults to in.secure."
     prompt: "Meshagatchi channel name"
+    password: false
+  - name: MESHTASTIC_MESHAGATCHI_CHANNEL_INDEX
+    description: "Channel slot used by Meshagatchi's native event-tool IPC client; must match the resolved Meshagatchi channel. Defaults to 1."
+    prompt: "Meshagatchi channel slot"
     password: false
   - name: MESHTASTIC_REPLY_ALL
     description: "Reply on every channel incl. public Primary (1/true/yes). Default: DMs only."

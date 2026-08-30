@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import uuid
 from typing import Any
@@ -81,14 +82,21 @@ def validate_send_request(request: Any, *, channel_name: str, channel_index: int
 
 def round_trip(path: str, payload: dict[str, Any], timeout: float = 15.0) -> dict[str, Any]:
     """Short-lived client used by the Hermes native event tool."""
+    channel_name = (os.getenv("MESHTASTIC_MESHAGATCHI_CHANNEL") or "in.secure").strip()
+    try:
+        channel_index = int(os.getenv("MESHTASTIC_MESHAGATCHI_CHANNEL_INDEX") or 1)
+    except ValueError:
+        raise ValueError("MESHTASTIC_MESHAGATCHI_CHANNEL_INDEX must be an integer") from None
+    if not channel_name or not 0 <= channel_index <= 7:
+        raise ValueError("Meshagatchi IPC channel configuration is invalid")
     request = {**payload, "id": str(payload.get("id") or uuid.uuid4()), "version": PROTOCOL_VERSION,
-               "channel_name": "in.secure", "channel_index": 1}
+               "channel_name": channel_name, "channel_index": channel_index}
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
         conn.settimeout(timeout)
         conn.connect(path)
         hello = _read_frame(conn)
         if hello.get("type") != "hello" or hello.get("version") != PROTOCOL_VERSION \
-                or hello.get("channel_name") != "in.secure" or hello.get("channel_index") != 1:
+                or hello.get("channel_name") != channel_name or hello.get("channel_index") != channel_index:
             raise RuntimeError("Meshagatchi IPC handshake rejected")
         encoded = (json.dumps(request, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
         if len(encoded) > MAX_REQUEST_BYTES:

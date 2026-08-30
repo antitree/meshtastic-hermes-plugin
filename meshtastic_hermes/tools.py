@@ -57,7 +57,7 @@ def _guard(fn: Callable[[dict], Any]) -> Callable[..., str]:
 
     def wrapper(args: dict, **kwargs: Any) -> str:
         try:
-            return fn(args or {})
+            return fn(args or {}, **kwargs)
         except MeshtasticUnavailable as exc:
             return _err(str(exc), code="radio_unavailable")
         except RuntimeError as exc:
@@ -99,7 +99,7 @@ def disconnect(args: dict) -> str:
 
 
 @_guard
-def send_text(args: dict) -> str:
+def send_text(args: dict, *, channel_spec: str | None = None) -> str:
     text = (args.get("text") or "").strip()
     if not text:
         return _err("No text provided.")
@@ -111,7 +111,7 @@ def send_text(args: dict) -> str:
     # channel_index is NOT defaulted to 0 here — a broadcast must name its channel,
     # because the channel a default would pick is the public Primary.
     try:
-        target = validate_tool_send(args, mgr.channel_table())
+        target = validate_tool_send(args, mgr.channel_table(), channel_spec=channel_spec)
     except ToolSendRejected as exc:
         return _err(str(exc), code=exc.code)
 

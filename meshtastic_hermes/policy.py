@@ -132,8 +132,8 @@ def allow_broadcast() -> bool:
     return tool_send_channel_spec() is not None
 
 
-def tool_send_channel_spec():
-    """Parse ``MESHTASTIC_TOOL_SEND_CHANNELS`` into an UNRESOLVED spec.
+def tool_send_channel_spec(override=None):
+    """Parse the tool-send allowlist into an UNRESOLVED spec.
 
     Same grammar and same resolution behavior as ``MESHTASTIC_REPLY_CHANNELS``
     (see :func:`meshtastic_hermes.gateway_bridge.parse_channel_spec`), but read from
@@ -145,8 +145,12 @@ def tool_send_channel_spec():
     Returns ``None`` when the variable is unset or empty, which is what "no channel
     broadcasts at all" means now that there is no separate broadcast flag.
     """
-    _warn_removed_vars()
-    spec = gb.parse_channel_spec(_env(TOOL_SEND_CHANNELS_ENV) or None)
+    if override is None:
+        _warn_removed_vars()
+        raw = _env(TOOL_SEND_CHANNELS_ENV)
+    else:
+        raw = str(override).strip()
+    spec = gb.parse_channel_spec(raw or None)
     if isinstance(spec, gb.ChannelSpec) and spec.indices:
         logger.warning(
             "%s uses numeric channel index/indices %s. Indices are radio SLOTS, not "
@@ -230,7 +234,7 @@ def _coerce_channel_index(raw: Any) -> int:
     return value
 
 
-def validate_tool_send(args: dict, channel_table: list[dict] | None) -> ToolSendTarget:
+def validate_tool_send(args: dict, channel_table: list[dict] | None, *, channel_spec=None) -> ToolSendTarget:
     """Authorize one ``meshtastic_send_text`` call. Returns the allowed target.
 
     Raises :class:`ToolSendRejected` (with a ``code``) when the destination is not
@@ -284,7 +288,7 @@ def validate_tool_send(args: dict, channel_table: list[dict] | None) -> ToolSend
 
     # ── broadcast ────────────────────────────────────────────────────────────
     table = channel_table or []
-    spec = tool_send_channel_spec()
+    spec = tool_send_channel_spec(channel_spec)
     if spec is None:
         raise ToolSendRejected(
             "Channel broadcasts from the meshtastic_send_text tool are disabled. This "

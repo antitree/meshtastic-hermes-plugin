@@ -66,6 +66,59 @@ async def test_ipc_forwards_channel_one_and_routes_send(adapter_mod, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_ipc_can_target_unnamed_longfast_primary(adapter_mod, monkeypatch, tmp_path):
+    socket_path = tmp_path / "meshagatchi.sock"
+    monkeypatch.setenv("MESHTASTIC_MESHAGATCHI_SOCKET", str(socket_path))
+    monkeypatch.setenv("MESHTASTIC_MESHAGATCHI_CHANNEL", "LongFast")
+    monkeypatch.setenv("MESHTASTIC_REPLY_CHANNELS", "in.secure")
+    manager = _FakeManager(channels=[
+        {"index": 0, "name": "", "role": 1},
+        {"index": 1, "name": "in.secure", "role": 2},
+    ])
+    _patch_manager(monkeypatch, manager)
+    adapter = _make(adapter_mod, monkeypatch)
+    sent = []
+
+    async def fake_send(chat_id, content, **kwargs):
+        sent.append((chat_id, content, kwargs))
+        return SimpleNamespace(success=True, error=None)
+
+    adapter.send = fake_send
+    await adapter.connect()
+    reader, writer = await asyncio.open_unix_connection(str(socket_path))
+    hello = json.loads((await reader.readline()).decode())
+    assert hello["channel_name"] == "LongFast"
+    assert hello["channel_index"] == 0
+
+    writer.write((json.dumps({
+        "op": "register", "id": "r1", "version": 1, "role": "meshagatchi",
+        "channel_name": "LongFast", "channel_index": 0, "pet_name": "BoneMurder",
+        "max_command_hops": 1, "benign_min_hops": 2, "benign_max_hops": 3,
+    }) + "\n").encode())
+    await writer.drain()
+    assert json.loads((await reader.readline()).decode())["ok"] is True
+
+    writer.write((json.dumps({
+        "op": "send", "text": "LongFast reply", "channel_name": "LongFast", "channel_index": 0,
+    }) + "\n").encode())
+    await writer.drain()
+    assert json.loads((await reader.readline()).decode())["ok"] is True
+    assert sent == [("ch:0", "LongFast reply", {"metadata": {"_meshagatchi": True}})]
+
+    await adapter._publish_meshagatchi({
+        "text": "@BoneMurder /ping", "from_id": "!user", "message_id": "42",
+        "is_dm": False, "channel": 0, "hops": 0,
+    })
+    event = json.loads((await reader.readline()).decode())
+    assert event["channel_name"] == "LongFast"
+    assert event["channel_index"] == 0
+
+    writer.close()
+    await writer.wait_closed()
+    await adapter.disconnect()
+
+
+@pytest.mark.asyncio
 async def test_event_request_is_forwarded_to_registered_sidecar(adapter_mod, monkeypatch, tmp_path):
     socket_path = tmp_path / "meshagatchi.sock"
     monkeypatch.setenv("MESHTASTIC_MESHAGATCHI_SOCKET", str(socket_path))

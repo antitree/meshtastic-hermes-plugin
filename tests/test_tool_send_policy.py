@@ -179,6 +179,17 @@ def test_broadcast_requires_the_channel_to_be_allowlisted(iface, monkeypatch):
     assert iface.sent == []
 
 
+def test_internal_sidecar_allowlist_does_not_widen_normal_tool_policy(iface, monkeypatch):
+    monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "in.secure")
+    data = _data(tools.send_text(
+        {"text": "meshagatchi reply", "channel_name": "LongFast"},
+        channel_spec="LongFast",
+    ))
+    assert "error" not in data
+    assert data["channel_index"] == 0
+    assert len(iface.sent) == 1
+
+
 def test_primary_is_authorized_by_naming_it(iface, monkeypatch):
     """Naming Primary is the Primary opt-in — no separate flag involved."""
     monkeypatch.setenv("MESHTASTIC_TOOL_SEND_CHANNELS", "Primary")
